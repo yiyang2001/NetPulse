@@ -12,7 +12,7 @@ namespace NetPulse.Platform;
 /// </summary>
 internal sealed unsafe class KernelNetworkTrace : IDisposable
 {
-    public const string SessionName = "NetPulse-KernelNetwork";
+    public static readonly string SessionName = $"NetPulse{AppPaths.ProfileSuffix}-KernelNetwork";
 
     private const uint ERROR_SUCCESS = 0;
     private const uint ERROR_ACCESS_DENIED = 5;

@@ -3,6 +3,7 @@ namespace NetPulse;
 internal enum MainTab
 {
     Usage,
+    Graph,
     Processes,
     Wifi,
     SpeedTest,
@@ -27,7 +28,7 @@ internal sealed class MainWindow : Form
 
     public MainWindow(IReadOnlyList<(MainTab Tab, string Title, Control Page)> pages, Icon icon)
     {
-        Text = "NetPulse";
+        Text = AppPaths.AppName;
         Icon = icon;
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;

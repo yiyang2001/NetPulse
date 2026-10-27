@@ -2,7 +2,7 @@ namespace NetPulse;
 
 internal static class Program
 {
-    internal const string ShowWindowEventName = @"Local\NetPulse.ShowMainWindow";
+    internal static readonly string ShowWindowEventName = $@"Local\NetPulse{AppPaths.ProfileSuffix}.ShowMainWindow";
 
     /// <summary>Passed to the elevated copy so it waits for this instance to exit before starting.</summary>
     internal const string RestartedArgument = "--restarted";
@@ -10,7 +10,7 @@ internal static class Program
     /// <summary>"--open=processes" etc.: tab to show right after start.</summary>
     internal const string OpenArgumentPrefix = "--open=";
 
-    private const string InstanceMutexName = @"Local\NetPulse.SingleInstance";
+    private static readonly string InstanceMutexName = $@"Local\NetPulse{AppPaths.ProfileSuffix}.SingleInstance";
 
     [STAThread]
     private static void Main(string[] args)

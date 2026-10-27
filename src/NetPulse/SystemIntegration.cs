@@ -7,7 +7,7 @@ namespace NetPulse;
 internal static class StartupRegistration
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string ValueName = "NetPulse";
+    private static readonly string ValueName = "NetPulse" + AppPaths.ProfileSuffix;
 
     public static bool IsEnabled()
     {

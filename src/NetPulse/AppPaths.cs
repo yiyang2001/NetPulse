@@ -4,8 +4,19 @@ namespace NetPulse;
 
 internal static class AppPaths
 {
+    /// <summary>
+    /// Optional NETPULSE_PROFILE (e.g. "dev"): gives a test build its own data folder, single-instance
+    /// lock, ETW session and startup entry, so it can run next to the everyday copy.
+    /// </summary>
+    public static string? Profile { get; } = ReadProfile();
+
+    /// <summary>"" normally, "-dev" for the dev profile; appended to names that must not collide.</summary>
+    public static string ProfileSuffix => Profile is null ? "" : "-" + Profile;
+
+    public static string AppName => Profile is null ? "NetPulse" : $"NetPulse ({Profile})";
+
     public static string DataDirectory { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NetPulse");
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NetPulse" + ProfileSuffix);
 
     public static string SettingsFile => Path.Combine(DataDirectory, "settings.json");
 
@@ -14,6 +25,15 @@ internal static class AppPaths
     public static string SpeedTestFile => Path.Combine(DataDirectory, "speedtests.json");
 
     public static string ErrorLogFile => Path.Combine(DataDirectory, "error.log");
+
+    /// <summary>ASCII letters/digits only, at most 16, lower-cased; anything else means no profile.</summary>
+    private static string? ReadProfile()
+    {
+        var value = Environment.GetEnvironmentVariable("NETPULSE_PROFILE")?.Trim();
+        return !string.IsNullOrEmpty(value) && value.Length <= 16 && value.All(char.IsAsciiLetterOrDigit)
+            ? value.ToLowerInvariant()
+            : null;
+    }
 }
 
 /// <summary>Local-only crash log. Nothing is ever sent anywhere.</summary>

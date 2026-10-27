@@ -35,6 +35,8 @@ internal sealed class NetPulseContext : ApplicationContext
     private DateTime _lastSave = DateTime.UtcNow;
     private DateTime _lastToolTip = DateTime.MinValue;
     private readonly ProcessTrafficService _processTraffic = new();
+    private readonly SpeedHistory _speedHistory = new(TimeSpan.FromMinutes(10));
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     private MainWindow? _mainWindow;
     private SettingsPage? _settingsPage;
     private volatile bool _exiting; // also read by the show-window callback on a pool thread
@@ -53,7 +55,7 @@ internal sealed class NetPulseContext : ApplicationContext
 
         BuildMenu();
         _tray.Icon = new Icon(_icon, SystemInformation.SmallIconSize);
-        _tray.Text = "NetPulse";
+        _tray.Text = AppPaths.AppName;
         _tray.ContextMenuStrip = _menu;
         _tray.MouseClick += (_, e) =>
         {
@@ -174,6 +176,7 @@ internal sealed class NetPulseContext : ApplicationContext
         };
 
         _menu.Items.Add("流量统计…", null, (_, _) => ShowMainWindow(MainTab.Usage));
+        _menu.Items.Add("实时速度…", null, (_, _) => ShowMainWindow(MainTab.Graph));
         _menu.Items.Add("进程流量…", null, (_, _) => ShowMainWindow(MainTab.Processes));
         _menu.Items.Add("Wi-Fi…", null, (_, _) => ShowMainWindow(MainTab.Wifi));
         _menu.Items.Add("测速…", null, (_, _) => ShowMainWindow(MainTab.SpeedTest));
@@ -227,11 +230,12 @@ internal sealed class NetPulseContext : ApplicationContext
         }
 
         _widget.ShowSpeed(sample);
+        _speedHistory.Add(_clock.Elapsed, sample);
 
         // NotifyIcon.Text is limited to 127 characters and updating it is relatively costly.
         var down = ByteFormatter.FormatSpeed(sample.DownloadBytesPerSecond, _settings.Unit);
         var up = ByteFormatter.FormatSpeed(sample.UploadBytesPerSecond, _settings.Unit);
-        _tray.Text = $"NetPulse\n↓ {down}   ↑ {up}";
+        _tray.Text = $"{AppPaths.AppName}\n↓ {down}   ↑ {up}";
 
         if (DateTime.UtcNow - _lastToolTip > TimeSpan.FromSeconds(5))
         {
@@ -306,7 +310,8 @@ internal sealed class NetPulseContext : ApplicationContext
             _mainWindow = new MainWindow(
             [
                 (MainTab.Usage, "流量统计", new UsagePage(_monitor.Ledger, _settings, SaveUsage)),
-                (MainTab.Processes, "进程流量", new ProcessTrafficPage(_processTraffic, RestartElevated)),
+                (MainTab.Graph, "实时速度", new SpeedGraphPage(_speedHistory, _settings)),
+                (MainTab.Processes, "进程流量",new ProcessTrafficPage(_processTraffic, RestartElevated)),
                 (MainTab.Wifi, "Wi-Fi", new WifiPage()),
                 (MainTab.SpeedTest, "测速", new SpeedTestPage()),
                 (MainTab.Tools, "网络工具", new NetworkToolsPage()),

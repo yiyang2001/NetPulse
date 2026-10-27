@@ -17,7 +17,8 @@ public static class ByteFormatter
     private static readonly string[] BitSpeedUnits = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
     private static readonly string[] SizeUnits = ["B", "KB", "MB", "GB", "TB", "PB"];
 
-    public static string FormatSpeed(double bytesPerSecond, SpeedUnit unit, CultureInfo? culture = null)
+    /// <param name="trimZeros">Drop trailing zeros ("5 MB/s", "2.5 MB/s"), e.g. for round axis labels.</param>
+    public static string FormatSpeed(double bytesPerSecond, SpeedUnit unit, CultureInfo? culture = null, bool trimZeros = false)
     {
         if (double.IsNaN(bytesPerSecond) || bytesPerSecond < 0)
         {
@@ -25,18 +26,18 @@ public static class ByteFormatter
         }
 
         return unit == SpeedUnit.Bits
-            ? Scale(bytesPerSecond * 8, 1000, BitSpeedUnits, culture)
-            : Scale(bytesPerSecond, 1024, ByteSpeedUnits, culture);
+            ? Scale(bytesPerSecond * 8, 1000, BitSpeedUnits, culture, trimZeros)
+            : Scale(bytesPerSecond, 1024, ByteSpeedUnits, culture, trimZeros);
     }
 
     public static string FormatSize(long bytes, CultureInfo? culture = null) =>
-        Scale(Math.Max(0, bytes), 1024, SizeUnits, culture);
+        Scale(Math.Max(0, bytes), 1024, SizeUnits, culture, trimZeros: false);
 
     /// <summary>
     /// Scales <paramref name="value"/> to the largest unit that keeps it below <paramref name="step"/>
     /// and prints three significant digits (e.g. "1.23", "12.3", "123"), integers for the base unit.
     /// </summary>
-    private static string Scale(double value, double step, string[] units, CultureInfo? culture)
+    private static string Scale(double value, double step, string[] units, CultureInfo? culture, bool trimZeros)
     {
         culture ??= CultureInfo.CurrentCulture;
         var index = 0;
@@ -53,7 +54,10 @@ public static class ByteFormatter
             index++;
         }
 
-        var format = index == 0 ? "0" : value < 10 ? "0.00" : value < 100 ? "0.0" : "0";
+        var format = index == 0 ? "0"
+            : value < 10 ? (trimZeros ? "0.##" : "0.00")
+            : value < 100 ? (trimZeros ? "0.#" : "0.0")
+            : "0";
         return value.ToString(format, culture) + " " + units[index];
     }
 }
