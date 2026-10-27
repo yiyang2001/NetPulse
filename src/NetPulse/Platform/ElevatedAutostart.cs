@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Principal;
 using System.Text;
 using NetPulse.Core;
+using static NetPulse.Core.Lang;
 
 namespace NetPulse.Platform;
 
@@ -86,24 +87,24 @@ internal static class ElevatedAutostart
             });
             if (process is null)
             {
-                return "无法启动设置程序。";
+                return T("无法启动设置程序。", "Could not start the setup helper.");
             }
 
             if (!process.WaitForExit(TimeSpan.FromSeconds(60)))
             {
-                return "设置程序没有响应。";
+                return T("设置程序没有响应。", "The setup helper did not respond.");
             }
 
             return process.ExitCode switch
             {
                 0 => null,
-                2 => "文件被占用：如果已安装的 NetPulse 正在运行，请先退出它再试。",
-                _ => "设置失败，详情见数据文件夹中的 error.log。",
+                2 => T("文件被占用：如果已安装的 NetPulse 正在运行，请先退出它再试。", "Files are in use: if the installed NetPulse is running, exit it and try again."),
+                _ => T("设置失败，详情见数据文件夹中的 error.log。", "Setup failed; see error.log in the data folder for details."),
             };
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == ERROR_CANCELLED)
         {
-            return "已取消。需要在 Windows 的权限提示中选择“是”。";
+            return T("已取消。需要在 Windows 的权限提示中选择“是”。", "Cancelled. Choose “Yes” in the Windows permission prompt.");
         }
     }
 

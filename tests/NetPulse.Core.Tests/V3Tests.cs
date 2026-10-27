@@ -234,3 +234,45 @@ public class LogonTaskTests
         Assert.StartsWith("<?xml version=\"1.0\" encoding=\"UTF-16\"?>", xml);
     }
 }
+
+// Lang is process-wide; keep the tests that switch it from running alongside others.
+[Collection(nameof(LangTests))]
+[CollectionDefinition(nameof(LangTests), DisableParallelization = true)]
+public class LangTests
+{
+    [Fact]
+    public void PicksTextForChosenLanguage()
+    {
+        try
+        {
+            Lang.Use(UiLanguage.English);
+            Assert.Equal("Open", new WifiProfileInfo("n", "s", "open", "none", false, true, false, null).SecurityLabel);
+            Lang.Use(UiLanguage.Chinese);
+            Assert.Equal("开放", new WifiProfileInfo("n", "s", "open", "none", false, true, false, null).SecurityLabel);
+        }
+        finally
+        {
+            Lang.Use(UiLanguage.Chinese);
+        }
+    }
+
+    [Fact]
+    public void SettingsWithoutLanguageLoadAsNull()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"netpulse-test-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, """{ "Unit": "Bits" }""");
+            var settings = new JsonFileStore<AppSettings>(path, () => new AppSettings()).Load().Normalize();
+            Assert.Null(settings.Language); // Program turns this into Chinese for existing users
+
+            settings.Language = UiLanguage.English;
+            new JsonFileStore<AppSettings>(path, () => new AppSettings()).Save(settings);
+            Assert.Equal(UiLanguage.English, new JsonFileStore<AppSettings>(path, () => new AppSettings()).Load().Language);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+}

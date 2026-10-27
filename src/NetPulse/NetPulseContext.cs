@@ -1,6 +1,7 @@
 using Microsoft.Win32;
 using NetPulse.Core;
 using NetPulse.Platform;
+using static NetPulse.Core.Lang;
 
 namespace NetPulse;
 
@@ -25,11 +26,11 @@ internal sealed class NetPulseContext : ApplicationContext
     private readonly SpeedWidget _widget = new();
     private readonly NotifyIcon _tray = new();
     private readonly ContextMenuStrip _menu = new();
-    private readonly ToolStripMenuItem _showWidgetItem = new("显示悬浮窗");
-    private readonly ToolStripMenuItem _lockItem = new("锁定位置");
-    private readonly ToolStripMenuItem _clickThroughItem = new("鼠标穿透");
-    private readonly ToolStripMenuItem _topMostItem = new("始终置顶");
-    private readonly ToolStripMenuItem _startupItem = new("开机自动启动");
+    private readonly ToolStripMenuItem _showWidgetItem = new(T("显示悬浮窗", "Show widget"));
+    private readonly ToolStripMenuItem _lockItem = new(T("锁定位置", "Lock position"));
+    private readonly ToolStripMenuItem _clickThroughItem = new(T("鼠标穿透", "Click-through"));
+    private readonly ToolStripMenuItem _topMostItem = new(T("始终置顶", "Always on top"));
+    private readonly ToolStripMenuItem _startupItem = new(T("开机自动启动", "Start with Windows"));
     private readonly System.Windows.Forms.Timer _sampleTimer = new();
     private readonly System.Windows.Forms.Timer _housekeepingTimer = new() { Interval = 2000 };
     private readonly EventWaitHandle _showWindowSignal;
@@ -190,19 +191,19 @@ internal sealed class NetPulseContext : ApplicationContext
             _settingsPage?.Reload();
         };
 
-        _menu.Items.Add("流量统计…", null, (_, _) => ShowMainWindow(MainTab.Usage));
-        _menu.Items.Add("实时速度…", null, (_, _) => ShowMainWindow(MainTab.Graph));
-        _menu.Items.Add("进程流量…", null, (_, _) => ShowMainWindow(MainTab.Processes));
+        _menu.Items.Add(T("流量统计…", "Usage…"), null, (_, _) => ShowMainWindow(MainTab.Usage));
+        _menu.Items.Add(T("实时速度…", "Live speed…"), null, (_, _) => ShowMainWindow(MainTab.Graph));
+        _menu.Items.Add(T("进程流量…", "Programs…"), null, (_, _) => ShowMainWindow(MainTab.Processes));
         _menu.Items.Add("Wi-Fi…", null, (_, _) => ShowMainWindow(MainTab.Wifi));
-        _menu.Items.Add("测速…", null, (_, _) => ShowMainWindow(MainTab.SpeedTest));
-        _menu.Items.Add("网络工具…", null, (_, _) => ShowMainWindow(MainTab.Tools));
-        _menu.Items.Add("设置…", null, (_, _) => ShowMainWindow(MainTab.Settings));
+        _menu.Items.Add(T("测速…", "Speed test…"), null, (_, _) => ShowMainWindow(MainTab.SpeedTest));
+        _menu.Items.Add(T("网络工具…", "Network tools…"), null, (_, _) => ShowMainWindow(MainTab.Tools));
+        _menu.Items.Add(T("设置…", "Settings…"), null, (_, _) => ShowMainWindow(MainTab.Settings));
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.AddRange([_showWidgetItem, _topMostItem, _lockItem, _clickThroughItem]);
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(_startupItem);
         _menu.Items.Add(new ToolStripSeparator());
-        _menu.Items.Add("退出", null, (_, _) => Exit());
+        _menu.Items.Add(T("退出", "Exit"), null, (_, _) => Exit());
         _menu.Opening += (_, _) =>
         {
             _showWidgetItem.Checked = _settings.ShowWidget;
@@ -257,7 +258,7 @@ internal sealed class NetPulseContext : ApplicationContext
             _lastToolTip = DateTime.UtcNow;
             var today = _monitor.Ledger.Get(DateOnly.FromDateTime(DateTime.Now));
             _widget.SetToolTipText(
-                $"今天：↓ {ByteFormatter.FormatSize(today.Downloaded)}  ↑ {ByteFormatter.FormatSize(today.Uploaded)}\n双击打开流量统计");
+                T($"今天：↓ {ByteFormatter.FormatSize(today.Downloaded)}  ↑ {ByteFormatter.FormatSize(today.Uploaded)}\n双击打开流量统计", $"Today: ↓ {ByteFormatter.FormatSize(today.Downloaded)}  ↑ {ByteFormatter.FormatSize(today.Uploaded)}\nDouble-click to open usage"));
         }
     }
 
@@ -309,11 +310,11 @@ internal sealed class NetPulseContext : ApplicationContext
         var used = $"{ByteFormatter.FormatSize(status.UsedBytes)} / {ByteFormatter.FormatSize(status.LimitBytes)}";
         if (alert == PlanAlertLevel.Exceeded)
         {
-            _tray.ShowBalloonTip(10_000, "流量套餐已用完", $"本周期已使用 {used}。", ToolTipIcon.Warning);
+            _tray.ShowBalloonTip(10_000, T("流量套餐已用完", "Data plan used up"), T($"本周期已使用 {used}。", $"Used {used} this cycle."), ToolTipIcon.Warning);
         }
         else
         {
-            _tray.ShowBalloonTip(10_000, "流量套餐即将用完", $"本周期已使用 {used}（{status.Fraction:P0}）。", ToolTipIcon.Info);
+            _tray.ShowBalloonTip(10_000, T("流量套餐即将用完", "Data plan almost used up"), T($"本周期已使用 {used}（{status.Fraction:P0}）。", $"Used {used} this cycle ({status.Fraction:P0})."), ToolTipIcon.Info);
         }
     }
 
@@ -325,13 +326,13 @@ internal sealed class NetPulseContext : ApplicationContext
             _settingsPage.SettingsChanged += (_, _) => ApplySettings(save: true);
             _mainWindow = new MainWindow(
             [
-                (MainTab.Usage, "流量统计", new UsagePage(_monitor.Ledger, _settings, SaveUsage)),
-                (MainTab.Graph, "实时速度", new SpeedGraphPage(_speedHistory, _settings)),
-                (MainTab.Processes, "进程流量",new ProcessTrafficPage(_processTraffic, _settings, RestartElevated)),
+                (MainTab.Usage, T("流量统计", "Usage"), new UsagePage(_monitor.Ledger, _settings, SaveUsage)),
+                (MainTab.Graph, T("实时速度", "Live speed"), new SpeedGraphPage(_speedHistory, _settings)),
+                (MainTab.Processes, T("进程流量", "Programs"),new ProcessTrafficPage(_processTraffic, _settings, RestartElevated)),
                 (MainTab.Wifi, "Wi-Fi", new WifiPage()),
-                (MainTab.SpeedTest, "测速", new SpeedTestPage()),
-                (MainTab.Tools, "网络工具", new NetworkToolsPage()),
-                (MainTab.Settings, "设置", _settingsPage),
+                (MainTab.SpeedTest, T("测速", "Speed test"), new SpeedTestPage()),
+                (MainTab.Tools, T("网络工具", "Network tools"), new NetworkToolsPage()),
+                (MainTab.Settings, T("设置", "Settings"), _settingsPage),
             ],
                 _icon);
             _mainWindow.ExitRequested += (_, _) => Exit();

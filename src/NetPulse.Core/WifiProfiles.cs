@@ -1,5 +1,6 @@
 using System.Text;
 using System.Xml.Linq;
+using static NetPulse.Core.Lang;
 
 namespace NetPulse.Core;
 
@@ -28,15 +29,15 @@ public sealed record WifiProfileInfo(
     public string SecurityLabel => Authentication.ToUpperInvariant() switch
     {
         "OPEN" when Encryption.Equals("WEP", StringComparison.OrdinalIgnoreCase) => "WEP",
-        "OPEN" => "开放",
+        "OPEN" => T("开放", "Open"),
         "SHARED" => "WEP",
-        "WPAPSK" => "WPA-个人",
-        "WPA2PSK" => "WPA2-个人",
-        "WPA3SAE" => "WPA3-个人",
-        "WPA3" or "WPA3ENT" or "WPA3ENT192" => "WPA3-企业",
-        "WPA2" => "WPA2-企业",
-        "WPA" => "WPA-企业",
-        "OWE" => "增强开放 (OWE)",
+        "WPAPSK" => T("WPA-个人", "WPA-Personal"),
+        "WPA2PSK" => T("WPA2-个人", "WPA2-Personal"),
+        "WPA3SAE" => T("WPA3-个人", "WPA3-Personal"),
+        "WPA3" or "WPA3ENT" or "WPA3ENT192" => T("WPA3-企业", "WPA3-Enterprise"),
+        "WPA2" => T("WPA2-企业", "WPA2-Enterprise"),
+        "WPA" => T("WPA-企业", "WPA-Enterprise"),
+        "OWE" => T("增强开放 (OWE)", "Enhanced Open (OWE)"),
         _ => Authentication,
     };
 }

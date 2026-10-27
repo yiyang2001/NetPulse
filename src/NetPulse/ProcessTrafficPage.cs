@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text;
 using NetPulse.Core;
 using NetPulse.Platform;
+using static NetPulse.Core.Lang;
 
 namespace NetPulse;
 
@@ -39,7 +40,7 @@ internal sealed class ProcessTrafficService(ProcessUsageLedger history) : IDispo
 
         if (!Elevation.IsAdministrator)
         {
-            Error = "按进程统计流量需要管理员权限。";
+            Error = T("按进程统计流量需要管理员权限。", "Per-program traffic needs administrator rights.");
             return false;
         }
 
@@ -53,7 +54,7 @@ internal sealed class ProcessTrafficService(ProcessUsageLedger history) : IDispo
         catch (Exception ex) when (ex is UnauthorizedAccessException or Win32Exception or PlatformNotSupportedException)
         {
             ErrorLog.Write(ex, "KernelNetworkTrace.Start");
-            Error = "无法启动内核网络跟踪：" + ex.Message;
+            Error = T("无法启动内核网络跟踪：", "Could not start kernel network tracing: ") + ex.Message;
             return false;
         }
     }
@@ -108,13 +109,13 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
     private IReadOnlyList<ProcessRate>? _lastRates;
     private Range? _columnsFor;
     private readonly Label _status = new() { AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
-    private readonly Button _elevate = new() { Text = "以管理员身份重启 NetPulse", AutoSize = true };
+    private readonly Button _elevate = new() { Text = T("以管理员身份重启 NetPulse", "Restart NetPulse as administrator"), AutoSize = true };
     private readonly Button _toggle = new() { AutoSize = true };
-    private readonly Button _reset = new() { Text = "清零", AutoSize = true };
-    private readonly Button _export = new() { Text = "导出 CSV…", AutoSize = true };
+    private readonly Button _reset = new() { Text = T("清零", "Reset"), AutoSize = true };
+    private readonly Button _export = new() { Text = T("导出 CSV…", "Export CSV…"), AutoSize = true };
     private readonly ComboBox _range = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
-    private readonly CheckBox _groupByName = new() { Text = "按程序合并", Checked = true, AutoSize = true };
-    private readonly CheckBox _hideIdle = new() { Text = "隐藏无流量的程序", Checked = true, AutoSize = true };
+    private readonly CheckBox _groupByName = new() { Text = T("按程序合并", "Group by program"), Checked = true, AutoSize = true };
+    private readonly CheckBox _hideIdle = new() { Text = T("隐藏无流量的程序", "Hide idle programs"), Checked = true, AutoSize = true };
     private readonly ListView _list = new FlickerFreeListView
     {
         Dock = DockStyle.Fill,
@@ -130,7 +131,7 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         _restartElevated = restartElevated;
         Padding = new Padding(12);
 
-        _range.Items.AddRange(["实时（本次记录）", "今天", "本周期", "最近 30 天"]);
+        _range.Items.AddRange([T("实时（本次记录）", "Live (this session)"), T("今天", "Today"), T("本周期", "This cycle"), T("最近 30 天", "Last 30 days")]);
         _range.SelectedIndex = 0;
         _range.SelectedIndexChanged += (_, _) => RefreshView();
 
@@ -138,7 +139,7 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         {
             if (!_restartElevated())
             {
-                _status.Text = "已取消。需要在 Windows 的权限提示中选择“是”。";
+                _status.Text = T("已取消。需要在 Windows 的权限提示中选择“是”。", "Cancelled. Choose “Yes” in the Windows permission prompt.");
             }
         };
         _toggle.Click += (_, _) =>
@@ -165,11 +166,11 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         _timer.Tick += (_, _) => RefreshView(sample: true);
 
         Controls.Add(_list);
-        Controls.Add(Ui.Toolbar(new Label { Text = "范围" }, _range, _toggle, _reset, _groupByName, _hideIdle, _export));
+        Controls.Add(Ui.Toolbar(new Label { Text = T("范围", "Range") }, _range, _toggle, _reset, _groupByName, _hideIdle, _export));
         Controls.Add(Ui.Toolbar(_status, _elevate));
         Controls.Add(Ui.Note(
-            "数据来自 Windows 内核网络事件（ETW），统计各程序的 TCP/UDP 收发字节数。" +
-            "这是 Windows 对管理员开放的功能，因此需要以管理员身份运行；以管理员身份运行时会自动记录，并按天保存每个程序的流量。"));
+            T("数据来自 Windows 内核网络事件（ETW），统计各程序的 TCP/UDP 收发字节数。", "Data comes from Windows kernel network events (ETW): bytes sent and received over TCP/UDP by each program. ") +
+            T("这是 Windows 对管理员开放的功能，因此需要以管理员身份运行；以管理员身份运行时会自动记录，并按天保存每个程序的流量。", "Windows only offers this to administrators, so NetPulse must run as administrator; it then records automatically and keeps daily totals per program.")));
     }
 
     private Range SelectedRange => (Range)Math.Max(0, _range.SelectedIndex);
@@ -203,7 +204,7 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         _reset.Visible = Elevation.IsAdministrator && live;
         _groupByName.Visible = _hideIdle.Visible = live;
         _export.Visible = !live;
-        _toggle.Text = _service.IsRunning ? "停止记录" : "开始记录";
+        _toggle.Text = _service.IsRunning ? T("停止记录", "Stop recording") : T("开始记录", "Start recording");
         EnsureColumns(range);
 
         if (live)
@@ -220,7 +221,7 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
     {
         if (!_service.IsRunning)
         {
-            _status.Text = _service.Error ?? "记录已停止。";
+            _status.Text = _service.Error ?? T("记录已停止。", "Recording stopped.");
             _list.Items.Clear();
             _lastRates = null;
             return;
@@ -232,12 +233,12 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         }
 
         var rates = _lastRates;
-        _status.Text = $"正在记录（自 {_service.StartedAt:HH:mm:ss} 起）"
-            + (_service.EventCount == 0 ? "，暂未收到网络事件" : string.Empty);
+        _status.Text = T($"正在记录（自 {_service.StartedAt:HH:mm:ss} 起）", $"Recording since {_service.StartedAt:HH:mm:ss}")
+            + (_service.EventCount == 0 ? T("，暂未收到网络事件", ", no network events yet") : string.Empty);
 
         var rows = _groupByName.Checked
             ? rates.GroupBy(r => ProcessName(r.ProcessId))
-                .Select(g => (Name: g.Key, Id: $"{g.Count()} 个", Down: g.Sum(r => r.DownloadBytesPerSecond), Up: g.Sum(r => r.UploadBytesPerSecond),
+                .Select(g => (Name: g.Key, Id: T($"{g.Count()} 个", $"{g.Count()}"), Down: g.Sum(r => r.DownloadBytesPerSecond), Up: g.Sum(r => r.UploadBytesPerSecond),
                     TotalDown: g.Sum(r => r.TotalDownloaded), TotalUp: g.Sum(r => r.TotalUploaded)))
             : rates.Select(r => (Name: ProcessName(r.ProcessId), Id: r.ProcessId.ToString(), Down: r.DownloadBytesPerSecond, Up: r.UploadBytesPerSecond,
                 TotalDown: r.TotalDownloaded, TotalUp: r.TotalUploaded));
@@ -272,9 +273,9 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         _service.RecordHistory();
         var (from, to) = DatesFor(range);
         var apps = _service.History.Totals(from, to);
-        var recording = _service.IsRunning ? "正在记录" : Elevation.IsAdministrator ? "记录已停止" : "当前未在记录（需要管理员权限）";
-        _status.Text = $"{from:yyyy-MM-dd} – {to:yyyy-MM-dd}，{apps.Count} 个程序，" +
-            $"合计 {ByteFormatter.FormatSize(apps.Sum(a => a.Total))}。{recording}。";
+        var recording = _service.IsRunning ? T("正在记录", "recording") : Elevation.IsAdministrator ? T("记录已停止", "recording stopped") : T("当前未在记录（需要管理员权限）", "not recording (needs administrator rights)");
+        _status.Text = T($"{from:yyyy-MM-dd} – {to:yyyy-MM-dd}，{apps.Count} 个程序，", $"{from:yyyy-MM-dd} – {to:yyyy-MM-dd}: {apps.Count} programs, ") +
+            T($"合计 {ByteFormatter.FormatSize(apps.Sum(a => a.Total))}。{recording}。", $"{ByteFormatter.FormatSize(apps.Sum(a => a.Total))} in total; {recording}.");
 
         _list.BeginUpdate();
         _list.Items.Clear();
@@ -314,20 +315,20 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         _columnsFor = range;
         _list.Items.Clear();
         _list.Columns.Clear();
-        _list.Columns.Add("程序", 220);
+        _list.Columns.Add(T("程序", "Program"), 220);
         if (live)
         {
-            _list.Columns.Add("PID / 进程数", 100, HorizontalAlignment.Right);
-            _list.Columns.Add("下载速度", 100, HorizontalAlignment.Right);
-            _list.Columns.Add("上传速度", 100, HorizontalAlignment.Right);
-            _list.Columns.Add("累计下载", 100, HorizontalAlignment.Right);
-            _list.Columns.Add("累计上传", 100, HorizontalAlignment.Right);
+            _list.Columns.Add(T("PID / 进程数", "PID / count"), 100, HorizontalAlignment.Right);
+            _list.Columns.Add(T("下载速度", "Download"), 100, HorizontalAlignment.Right);
+            _list.Columns.Add(T("上传速度", "Upload"), 100, HorizontalAlignment.Right);
+            _list.Columns.Add(T("累计下载", "Downloaded"), 100, HorizontalAlignment.Right);
+            _list.Columns.Add(T("累计上传", "Uploaded"), 100, HorizontalAlignment.Right);
         }
         else
         {
-            _list.Columns.Add("下载", 120, HorizontalAlignment.Right);
-            _list.Columns.Add("上传", 120, HorizontalAlignment.Right);
-            _list.Columns.Add("合计", 120, HorizontalAlignment.Right);
+            _list.Columns.Add(T("下载", "Downloaded"), 120, HorizontalAlignment.Right);
+            _list.Columns.Add(T("上传", "Uploaded"), 120, HorizontalAlignment.Right);
+            _list.Columns.Add(T("合计", "Total"), 120, HorizontalAlignment.Right);
         }
     }
 
@@ -336,7 +337,7 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         var (from, to) = DatesFor(SelectedRange);
         using var dialog = new SaveFileDialog
         {
-            Filter = "CSV 文件 (*.csv)|*.csv",
+            Filter = T("CSV 文件 (*.csv)|*.csv", "CSV files (*.csv)|*.csv"),
             FileName = $"NetPulse-programs-{from:yyyyMMdd}-{to:yyyyMMdd}.csv",
         };
         if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -357,14 +358,14 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            MessageBox.Show(this, "导出失败：" + ex.Message, AppPaths.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, T("导出失败：", "Export failed: ") + ex.Message, AppPaths.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
     private string ProcessName(int pid)
     {
         var (name, exited) = _service.Names.Resolve(pid);
-        return exited ? name + "（已退出）" : name;
+        return exited ? name + T("（已退出）", " (exited)") : name;
     }
 }
 
@@ -374,7 +375,7 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
 /// </summary>
 internal sealed class ProcessNameCache
 {
-    private const string UnknownName = "（未知进程）";
+    private static string UnknownName => T("（未知进程）", "(unknown process)");
     private readonly Dictionary<int, (string Name, bool Exited, long CheckedAt)> _names = [];
 
     public (string Name, bool Exited) Resolve(int pid)

@@ -32,7 +32,11 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        var isFirstRun = !File.Exists(NetPulseContext.SettingsStore.Path);
         var settings = NetPulseContext.SettingsStore.Load().Normalize();
+        // Settings from before v0.3 have no language: those users have been using the Chinese UI.
+        settings.Language ??= isFirstRun ? UiLanguage.Auto : UiLanguage.Chinese;
+        Lang.Use(settings.Language.Value);
         Application.SetColorMode(settings.WindowTheme switch
         {
             ThemeMode.Dark => SystemColorMode.Dark,
@@ -112,10 +116,15 @@ internal static class Program
     }
 
     /// <summary>
-    /// The UI text is Chinese; Segoe UI lacks CJK glyphs, and per-character fallback mixes weights.
+    /// Chinese UI: Segoe UI lacks CJK glyphs, and per-character fallback mixes weights. English uses the system font.
     /// </summary>
     private static Font CreateUiFont()
     {
+        if (Lang.IsEnglish)
+        {
+            return (Font)(SystemFonts.MessageBoxFont ?? Control.DefaultFont).Clone();
+        }
+
         using var probe = new Font("Microsoft YaHei UI", 9f);
         return probe.Name == "Microsoft YaHei UI"
             ? new Font("Microsoft YaHei UI", 9f)

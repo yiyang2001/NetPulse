@@ -1,8 +1,9 @@
 using NetPulse.Core;
+using static NetPulse.Core.Lang;
 
 namespace NetPulse;
 
-/// <summary>Runs <see cref="SpeedTestRunner"/> on demand. The only network access happens after "开始测速".</summary>
+/// <summary>Runs <see cref="SpeedTestRunner"/> on demand. The only network access happens after T("开始测速", "Start test").</summary>
 internal sealed class SpeedTestPage : UserControl
 {
     private const int MaxHistory = 50;
@@ -14,7 +15,7 @@ internal sealed class SpeedTestPage : UserControl
     private readonly Label _upload = Metric();
     private readonly Label _status = new() { AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
     private readonly ProgressBar _progress = new() { Width = 300, Height = 18, Maximum = 1000 };
-    private readonly Button _start = new() { Text = "开始测速", AutoSize = true };
+    private readonly Button _start = new() { Text = T("开始测速", "Start test"), AutoSize = true };
     private readonly ListView _list = new FlickerFreeListView
     {
         Dock = DockStyle.Fill,
@@ -29,12 +30,12 @@ internal sealed class SpeedTestPage : UserControl
         Padding = new Padding(12);
         _history = _store.Load();
 
-        _list.Columns.Add("时间", 150);
-        _list.Columns.Add("服务器", 70);
-        _list.Columns.Add("延迟", 80, HorizontalAlignment.Right);
-        _list.Columns.Add("抖动", 80, HorizontalAlignment.Right);
-        _list.Columns.Add("下载", 110, HorizontalAlignment.Right);
-        _list.Columns.Add("上传", 110, HorizontalAlignment.Right);
+        _list.Columns.Add(T("时间", "Time"), 150);
+        _list.Columns.Add(T("服务器", "Server"), 70);
+        _list.Columns.Add(T("延迟", "Latency"), 80, HorizontalAlignment.Right);
+        _list.Columns.Add(T("抖动", "Jitter"), 80, HorizontalAlignment.Right);
+        _list.Columns.Add(T("下载", "Download"), 110, HorizontalAlignment.Right);
+        _list.Columns.Add(T("上传", "Upload"), 110, HorizontalAlignment.Right);
 
         var metrics = new TableLayoutPanel { Dock = DockStyle.Top, Height = 96, ColumnCount = 3 };
         for (var i = 0; i < 3; i++)
@@ -42,11 +43,11 @@ internal sealed class SpeedTestPage : UserControl
             metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
         }
 
-        metrics.Controls.Add(MetricBox("延迟 / 抖动", _latency), 0, 0);
-        metrics.Controls.Add(MetricBox("下载", _download), 1, 0);
-        metrics.Controls.Add(MetricBox("上传", _upload), 2, 0);
+        metrics.Controls.Add(MetricBox(T("延迟 / 抖动", "Latency / jitter"), _latency), 0, 0);
+        metrics.Controls.Add(MetricBox(T("下载", "Download"), _download), 1, 0);
+        metrics.Controls.Add(MetricBox(T("上传", "Upload"), _upload), 2, 0);
 
-        var historyLabel = new Label { Text = "历史记录（仅保存在本机）", AutoSize = true, Font = new Font(DefaultFont, FontStyle.Bold), Padding = new Padding(0, 10, 0, 4) };
+        var historyLabel = new Label { Text = T("历史记录（仅保存在本机）", "History (kept on this PC only)"), AutoSize = true, Font = new Font(DefaultFont, FontStyle.Bold), Padding = new Padding(0, 10, 0, 4) };
         var historyHeader = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
         historyHeader.Controls.Add(historyLabel);
 
@@ -55,8 +56,8 @@ internal sealed class SpeedTestPage : UserControl
         Controls.Add(metrics);
         Controls.Add(Ui.Toolbar(_start, _progress, _status));
         Controls.Add(Ui.Note(
-            $"测速会连接 Cloudflare 的公共测速服务器（{SpeedTestRunner.ServerHost}），只在点击“开始测速”后联网，" +
-            "下载和上传各约 10 秒，会消耗几十到几百 MB 流量。按流量计费的网络请注意。"));
+            T($"测速会连接 Cloudflare 的公共测速服务器（{SpeedTestRunner.ServerHost}），只在点击“开始测速”后联网，", $"The test connects to Cloudflare's public speed test servers ({SpeedTestRunner.ServerHost}), only after you click “Start test”. ") +
+            T("下载和上传各约 10 秒，会消耗几十到几百 MB 流量。按流量计费的网络请注意。", "Download and upload run about 10 seconds each and use tens to hundreds of MB; mind metered connections.")));
 
         _start.Click += async (_, _) => await StartOrStopAsync();
         ResetMetrics();
@@ -107,8 +108,8 @@ internal sealed class SpeedTestPage : UserControl
         }
 
         ResetMetrics();
-        _start.Text = "停止";
-        _status.Text = "正在连接…";
+        _start.Text = T("停止", "Stop");
+        _status.Text = T("正在连接…", "Connecting…");
         using var cts = new CancellationTokenSource();
         _running = cts;
         var progress = new Progress<SpeedTestProgress>(OnProgress);
@@ -125,20 +126,20 @@ internal sealed class SpeedTestPage : UserControl
 
             SaveHistory();
             ShowHistory();
-            _status.Text = string.IsNullOrEmpty(result.Server) ? "完成。" : $"完成（服务器：Cloudflare {result.Server}）。";
+            _status.Text = string.IsNullOrEmpty(result.Server) ? T("完成。", "Done.") : T($"完成（服务器：Cloudflare {result.Server}）。", $"Done (server: Cloudflare {result.Server}).");
         }
         catch (OperationCanceledException)
         {
-            _status.Text = "已停止。";
+            _status.Text = T("已停止。", "Stopped.");
         }
         catch (HttpRequestException ex)
         {
-            _status.Text = "测速失败：" + ex.Message;
+            _status.Text = T("测速失败：", "Speed test failed: ") + ex.Message;
         }
         finally
         {
             _running = null;
-            _start.Text = "开始测速";
+            _start.Text = T("开始测速", "Start test");
         }
     }
 
@@ -151,14 +152,14 @@ internal sealed class SpeedTestPage : UserControl
         switch (p.Phase)
         {
             case SpeedTestPhase.Latency:
-                _status.Text = "正在测量延迟…";
+                _status.Text = T("正在测量延迟…", "Measuring latency…");
                 break;
             case SpeedTestPhase.Download:
-                _status.Text = "正在测试下载…";
+                _status.Text = T("正在测试下载…", "Testing download…");
                 _download.Text = Mbps(p.CurrentBytesPerSecond);
                 break;
             case SpeedTestPhase.Upload:
-                _status.Text = "正在测试上传…";
+                _status.Text = T("正在测试上传…", "Testing upload…");
                 _upload.Text = Mbps(p.CurrentBytesPerSecond);
                 break;
         }

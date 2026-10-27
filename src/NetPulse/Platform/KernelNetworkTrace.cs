@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using NetPulse.Core;
+using static NetPulse.Core.Lang;
 
 namespace NetPulse.Platform;
 
@@ -197,7 +198,7 @@ internal sealed unsafe class KernelNetworkTrace : IDisposable
 
         if (status == ERROR_ACCESS_DENIED)
         {
-            throw new UnauthorizedAccessException("需要管理员权限才能按进程统计流量。");
+            throw new UnauthorizedAccessException(T("需要管理员权限才能按进程统计流量。", "Per-program traffic needs administrator rights."));
         }
 
         throw new Win32Exception((int)status, $"{operation} failed ({status}).");

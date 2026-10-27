@@ -4,6 +4,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using NetPulse.Core;
+using static NetPulse.Core.Lang;
 
 namespace NetPulse;
 
@@ -15,9 +16,9 @@ internal sealed class NetworkToolsPage : UserControl
         Padding = new Padding(12);
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(Wrap("Ping", new PingTool()));
-        tabs.TabPages.Add(Wrap("路由追踪", new TraceRouteTool()));
-        tabs.TabPages.Add(Wrap("DNS 查询", new DnsTool()));
-        tabs.TabPages.Add(Wrap("本机网络", new LocalNetworkTool()));
+        tabs.TabPages.Add(Wrap(T("路由追踪", "Traceroute"), new TraceRouteTool()));
+        tabs.TabPages.Add(Wrap(T("DNS 查询", "DNS lookup"), new DnsTool()));
+        tabs.TabPages.Add(Wrap(T("本机网络", "This PC"), new LocalNetworkTool()));
         Controls.Add(tabs);
     }
 
@@ -45,13 +46,13 @@ internal sealed class NetworkToolsPage : UserControl
 
     internal static string Describe(IPStatus status) => status switch
     {
-        IPStatus.TimedOut => "请求超时",
-        IPStatus.DestinationHostUnreachable => "目标主机不可达",
-        IPStatus.DestinationNetworkUnreachable => "目标网络不可达",
-        IPStatus.DestinationUnreachable => "目标不可达",
-        IPStatus.TtlExpired or IPStatus.TimeExceeded => "TTL 已过期",
-        IPStatus.PacketTooBig => "数据包过大",
-        IPStatus.BadDestination => "目标地址无效",
+        IPStatus.TimedOut => T("请求超时", "Request timed out"),
+        IPStatus.DestinationHostUnreachable => T("目标主机不可达", "Destination host unreachable"),
+        IPStatus.DestinationNetworkUnreachable => T("目标网络不可达", "Destination network unreachable"),
+        IPStatus.DestinationUnreachable => T("目标不可达", "Destination unreachable"),
+        IPStatus.TtlExpired or IPStatus.TimeExceeded => T("TTL 已过期", "TTL expired"),
+        IPStatus.PacketTooBig => T("数据包过大", "Packet too big"),
+        IPStatus.BadDestination => T("目标地址无效", "Bad destination"),
         _ => status.ToString(),
     };
 }
@@ -108,18 +109,18 @@ internal abstract class ToolPanel : UserControl
 
         using var cts = new CancellationTokenSource();
         _cts = cts;
-        _run.Text = "停止";
+        _run.Text = T("停止", "Stop");
         try
         {
             await RunAsync(cts.Token);
         }
         catch (OperationCanceledException)
         {
-            Output.AppendLine("已停止。");
+            Output.AppendLine(T("已停止。", "Stopped."));
         }
         catch (Exception ex) when (ex is SocketException or PingException or ArgumentException or HttpRequestException)
         {
-            Output.AppendLine("出错：" + (ex.InnerException?.Message ?? ex.Message));
+            Output.AppendLine(T("出错：", "Error: ") + (ex.InnerException?.Message ?? ex.Message));
         }
         finally
         {
@@ -135,12 +136,12 @@ internal sealed class PingTool : ToolPanel
     private readonly NumericUpDown _count;
 
     public PingTool()
-        : this(new TextBox { Width = 260, PlaceholderText = "域名或 IP，例如 1.1.1.1" }, new NumericUpDown { Minimum = 1, Maximum = 1000, Value = 4, Width = 70 })
+        : this(new TextBox { Width = 260, PlaceholderText = T("域名或 IP，例如 1.1.1.1", "Host name or IP, e.g. 1.1.1.1") }, new NumericUpDown { Minimum = 1, Maximum = 1000, Value = 4, Width = 70 })
     {
     }
 
     private PingTool(TextBox host, NumericUpDown count)
-        : base("开始", new Label { Text = "目标" }, host, new Label { Text = "次数" }, count)
+        : base(T("开始", "Start"), new Label { Text = T("目标", "Target") }, host, new Label { Text = T("次数", "Count") }, count)
     {
         _host = host;
         _count = count;
@@ -151,12 +152,12 @@ internal sealed class PingTool : ToolPanel
         var host = _host.Text.Trim();
         if (host.Length == 0)
         {
-            Output.AppendLine("请输入目标。");
+            Output.AppendLine(T("请输入目标。", "Enter a target."));
             return;
         }
 
         var address = await NetworkToolsPage.ResolveAsync(host, cancellationToken);
-        Output.AppendLine($"正在 Ping {host} [{address}]，32 字节数据：");
+        Output.AppendLine(T($"正在 Ping {host} [{address}]，32 字节数据：", $"Pinging {host} [{address}] with 32 bytes of data:"));
         var results = new List<double?>();
         using var ping = new Ping();
         var buffer = new byte[32];
@@ -172,20 +173,20 @@ internal sealed class PingTool : ToolPanel
             {
                 results.Add(reply.RoundtripTime);
                 var ttl = reply.Options?.Ttl is { } t ? $" TTL={t}" : string.Empty;
-                Output.AppendLine($"来自 {reply.Address} 的回复：时间={reply.RoundtripTime} ms{ttl}");
+                Output.AppendLine(T($"来自 {reply.Address} 的回复：时间={reply.RoundtripTime} ms{ttl}", $"Reply from {reply.Address}: time={reply.RoundtripTime} ms{ttl}"));
             }
             else
             {
                 results.Add(null);
-                Output.AppendLine(NetworkToolsPage.Describe(reply.Status) + "。");
+                Output.AppendLine(NetworkToolsPage.Describe(reply.Status) + T("。", "."));
             }
         }
 
         var summary = PingSummary.From(results);
-        Output.AppendLine($"统计：已发送 {summary.Sent}，已接收 {summary.Received}，丢失 {summary.Lost}（{summary.LossFraction:P0}）");
+        Output.AppendLine(T($"统计：已发送 {summary.Sent}，已接收 {summary.Received}，丢失 {summary.Lost}（{summary.LossFraction:P0}）", $"Statistics: sent {summary.Sent}, received {summary.Received}, lost {summary.Lost} ({summary.LossFraction:P0})"));
         if (summary.AverageMs is { } average)
         {
-            Output.AppendLine($"往返时间：最短 {summary.MinMs:0} ms，最长 {summary.MaxMs:0} ms，平均 {average:0} ms");
+            Output.AppendLine(T($"往返时间：最短 {summary.MinMs:0} ms，最长 {summary.MaxMs:0} ms，平均 {average:0} ms", $"Round trip: min {summary.MinMs:0} ms, max {summary.MaxMs:0} ms, average {average:0} ms"));
         }
 
         Output.AppendLine(string.Empty);
@@ -199,12 +200,12 @@ internal sealed class TraceRouteTool : ToolPanel
     private readonly CheckBox _resolveNames;
 
     public TraceRouteTool()
-        : this(new TextBox { Width = 260, PlaceholderText = "域名或 IP" }, new CheckBox { Text = "解析节点名称", Checked = true, AutoSize = true })
+        : this(new TextBox { Width = 260, PlaceholderText = T("域名或 IP", "Host name or IP") }, new CheckBox { Text = T("解析节点名称", "Resolve hop names"), Checked = true, AutoSize = true })
     {
     }
 
     private TraceRouteTool(TextBox host, CheckBox resolveNames)
-        : base("开始", new Label { Text = "目标" }, host, resolveNames)
+        : base(T("开始", "Start"), new Label { Text = T("目标", "Target") }, host, resolveNames)
     {
         _host = host;
         _resolveNames = resolveNames;
@@ -215,12 +216,12 @@ internal sealed class TraceRouteTool : ToolPanel
         var host = _host.Text.Trim();
         if (host.Length == 0)
         {
-            Output.AppendLine("请输入目标。");
+            Output.AppendLine(T("请输入目标。", "Enter a target."));
             return;
         }
 
         var target = await NetworkToolsPage.ResolveAsync(host, cancellationToken);
-        Output.AppendLine($"通过最多 {MaxHops} 个跃点跟踪到 {host} [{target}] 的路由：");
+        Output.AppendLine(T($"通过最多 {MaxHops} 个跃点跟踪到 {host} [{target}] 的路由：", $"Tracing route to {host} [{target}] over a maximum of {MaxHops} hops:"));
         using var ping = new Ping();
         var buffer = new byte[32];
         for (var ttl = 1; ttl <= MaxHops; ttl++)
@@ -231,7 +232,7 @@ internal sealed class TraceRouteTool : ToolPanel
 
             if (reply.Status is IPStatus.TimedOut)
             {
-                Output.AppendLine($"{ttl,3}  *        请求超时");
+                Output.AppendLine(T($"{ttl,3}  *        请求超时", $"{ttl,3}  *        Request timed out"));
                 continue;
             }
 
@@ -243,18 +244,18 @@ internal sealed class TraceRouteTool : ToolPanel
 
             if (reply.Status == IPStatus.Success || reply.Address.Equals(target))
             {
-                Output.AppendLine("跟踪完成。" + Environment.NewLine);
+                Output.AppendLine(T("跟踪完成。", "Trace complete.") + Environment.NewLine);
                 return;
             }
 
             if (reply.Status is not (IPStatus.TtlExpired or IPStatus.TimeExceeded))
             {
-                Output.AppendLine($"     {NetworkToolsPage.Describe(reply.Status)}，停止跟踪。" + Environment.NewLine);
+                Output.AppendLine(T($"     {NetworkToolsPage.Describe(reply.Status)}，停止跟踪。", $"     {NetworkToolsPage.Describe(reply.Status)}; trace stopped.") + Environment.NewLine);
                 return;
             }
         }
 
-        Output.AppendLine("已达到最大跃点数。" + Environment.NewLine);
+        Output.AppendLine(T("已达到最大跃点数。", "Maximum hop count reached.") + Environment.NewLine);
     }
 
     private static async Task<string?> ReverseLookupAsync(IPAddress address, CancellationToken cancellationToken)
@@ -278,12 +279,12 @@ internal sealed class DnsTool : ToolPanel
     private readonly TextBox _query;
 
     public DnsTool()
-        : this(new TextBox { Width = 300, PlaceholderText = "域名（正向查询）或 IP（反向查询）" })
+        : this(new TextBox { Width = 300, PlaceholderText = T("域名（正向查询）或 IP（反向查询）", "Host name (forward lookup) or IP (reverse lookup)") })
     {
     }
 
     private DnsTool(TextBox query)
-        : base("查询", new Label { Text = "查询" }, query)
+        : base(T("查询", "Look up"), new Label { Text = T("查询", "Look up") }, query)
     {
         _query = query;
     }
@@ -293,7 +294,7 @@ internal sealed class DnsTool : ToolPanel
         var query = _query.Text.Trim();
         if (query.Length == 0)
         {
-            Output.AppendLine("请输入要查询的域名或 IP。");
+            Output.AppendLine(T("请输入要查询的域名或 IP。", "Enter a host name or IP to look up."));
             return;
         }
 
@@ -303,23 +304,23 @@ internal sealed class DnsTool : ToolPanel
             .Where(a => !a.IsIPv6SiteLocal) // fec0:0:0:ffff::1-3 are placeholders on adapters without DNS
             .Distinct()
             .ToList();
-        Output.AppendLine("使用系统 DNS 服务器：" + (servers.Count > 0 ? string.Join(", ", servers) : "（未知）"));
+        Output.AppendLine(T("使用系统 DNS 服务器：", "Using system DNS servers: ") + (servers.Count > 0 ? string.Join(", ", servers) : T("（未知）", "(unknown)")));
 
         var stopwatch = Stopwatch.StartNew();
         if (IPAddress.TryParse(query, out var address))
         {
             var entry = await Dns.GetHostEntryAsync(address.ToString(), cancellationToken);
-            Output.AppendLine($"{address} 的反向解析（{stopwatch.ElapsedMilliseconds} ms）：");
+            Output.AppendLine(T($"{address} 的反向解析（{stopwatch.ElapsedMilliseconds} ms）：", $"Reverse lookup of {address} ({stopwatch.ElapsedMilliseconds} ms):"));
             Output.AppendLine("  " + entry.HostName);
             foreach (var alias in entry.Aliases)
             {
-                Output.AppendLine("  别名 " + alias);
+                Output.AppendLine(T("  别名 ", "  Alias ") + alias);
             }
         }
         else
         {
             var addresses = await Dns.GetHostAddressesAsync(query, cancellationToken);
-            Output.AppendLine($"{query} 的解析结果（{stopwatch.ElapsedMilliseconds} ms）：");
+            Output.AppendLine(T($"{query} 的解析结果（{stopwatch.ElapsedMilliseconds} ms）：", $"Results for {query} ({stopwatch.ElapsedMilliseconds} ms):"));
             foreach (var a in addresses.OrderBy(a => a.AddressFamily == AddressFamily.InterNetworkV6))
             {
                 Output.AppendLine($"  {(a.AddressFamily == AddressFamily.InterNetworkV6 ? "AAAA" : "A   ")}  {a}");
@@ -334,11 +335,11 @@ internal sealed class LocalNetworkTool : UserControl
 {
     private static readonly HttpClient Http = CreateHttpClient();
     private readonly TextBox _output = Ui.OutputBox();
-    private readonly Button _publicIp = new() { Text = "查询公网 IP（连接 Cloudflare）", AutoSize = true };
+    private readonly Button _publicIp = new() { Text = T("查询公网 IP（连接 Cloudflare）", "Look up public IP (contacts Cloudflare)"), AutoSize = true };
 
     public LocalNetworkTool()
     {
-        var refresh = new Button { Text = "刷新", AutoSize = true };
+        var refresh = new Button { Text = T("刷新", "Refresh"), AutoSize = true };
         refresh.Click += (_, _) => ShowAdapters();
         _publicIp.Click += async (_, _) => await ShowPublicIpAsync();
         Controls.Add(_output);
@@ -349,7 +350,7 @@ internal sealed class LocalNetworkTool : UserControl
     private static HttpClient CreateHttpClient()
     {
         var client = new HttpClient(new SocketsHttpHandler { UseCookies = false }) { Timeout = TimeSpan.FromSeconds(10) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("NetPulse/0.2");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("NetPulse/" + typeof(NetworkToolsPage).Assembly.GetName().Version?.ToString(2));
         return client;
     }
 
@@ -361,13 +362,13 @@ internal sealed class LocalNetworkTool : UserControl
                      .OrderBy(n => NetworkAdapters.IsVirtual(n.Name, n.Description)))
         {
             var ip = nic.GetIPProperties();
-            text.AppendLine($"■ {nic.Name}" + (NetworkAdapters.IsVirtual(nic.Name, nic.Description) ? "（虚拟）" : string.Empty));
-            text.AppendLine($"  描述      {nic.Description}");
-            text.AppendLine($"  类型      {nic.NetworkInterfaceType}，{FormatLinkSpeed(nic.Speed)}");
+            text.AppendLine($"■ {nic.Name}" + (NetworkAdapters.IsVirtual(nic.Name, nic.Description) ? T("（虚拟）", " (virtual)") : string.Empty));
+            text.AppendLine(T($"  描述      {nic.Description}", $"  Adapter   {nic.Description}"));
+            text.AppendLine(T($"  类型      {nic.NetworkInterfaceType}，{FormatLinkSpeed(nic.Speed)}", $"  Type      {nic.NetworkInterfaceType}, {FormatLinkSpeed(nic.Speed)}"));
             var mac = nic.GetPhysicalAddress().GetAddressBytes();
             if (mac.Length > 0)
             {
-                text.AppendLine($"  MAC 地址  {string.Join('-', mac.Select(b => b.ToString("X2")))}");
+                text.AppendLine(T($"  MAC 地址  {string.Join('-', mac.Select(b => b.ToString("X2")))}", $"  MAC       {string.Join('-', mac.Select(b => b.ToString("X2")))}"));
             }
 
             foreach (var unicast in ip.UnicastAddresses)
@@ -378,7 +379,7 @@ internal sealed class LocalNetworkTool : UserControl
 
             foreach (var gateway in ip.GatewayAddresses)
             {
-                text.AppendLine($"  网关      {gateway.Address}");
+                text.AppendLine(T($"  网关      {gateway.Address}", $"  Gateway   {gateway.Address}"));
             }
 
             foreach (var dns in ip.DnsAddresses)
@@ -388,7 +389,7 @@ internal sealed class LocalNetworkTool : UserControl
 
             try
             {
-                text.AppendLine($"  DHCP      {(ip.GetIPv4Properties().IsDhcpEnabled ? "是" : "否")}");
+                text.AppendLine($"  DHCP      {(ip.GetIPv4Properties().IsDhcpEnabled ? T("是", "yes") : T("否", "no"))}");
             }
             catch (NetworkInformationException)
             {
@@ -401,7 +402,7 @@ internal sealed class LocalNetworkTool : UserControl
     }
 
     private static string FormatLinkSpeed(long bitsPerSecond) =>
-        bitsPerSecond <= 0 ? "速率未知" : ByteFormatter.FormatSpeed(bitsPerSecond / 8.0, SpeedUnit.Bits);
+        bitsPerSecond <= 0 ? T("速率未知", "speed unknown") : ByteFormatter.FormatSpeed(bitsPerSecond / 8.0, SpeedUnit.Bits);
 
     /// <summary>Cloudflare's trace endpoint echoes the caller's public address and nearest data center.</summary>
     private async Task ShowPublicIpAsync()
@@ -414,15 +415,15 @@ internal sealed class LocalNetworkTool : UserControl
                 .Select(line => line.Split('=', 2))
                 .Where(parts => parts.Length == 2)
                 .ToDictionary(parts => parts[0], parts => parts[1].Trim());
-            _output.AppendLine("■ 公网信息（来自 Cloudflare）");
-            _output.AppendLine($"  公网 IP   {fields.GetValueOrDefault("ip", "未知")}");
-            _output.AppendLine($"  地区      {fields.GetValueOrDefault("loc", "未知")}");
-            _output.AppendLine($"  节点      {fields.GetValueOrDefault("colo", "未知")}");
+            _output.AppendLine(T("■ 公网信息（来自 Cloudflare）", "■ Public address (from Cloudflare)"));
+            _output.AppendLine(T($"  公网 IP   {fields.GetValueOrDefault("ip", "未知")}", $"  Public IP {fields.GetValueOrDefault("ip", "unknown")}"));
+            _output.AppendLine(T($"  地区      {fields.GetValueOrDefault("loc", "未知")}", $"  Location  {fields.GetValueOrDefault("loc", "unknown")}"));
+            _output.AppendLine(T($"  节点      {fields.GetValueOrDefault("colo", "未知")}", $"  Colo      {fields.GetValueOrDefault("colo", "unknown")}"));
             _output.AppendLine(string.Empty);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            _output.AppendLine("查询公网 IP 失败：" + ex.Message);
+            _output.AppendLine(T("查询公网 IP 失败：", "Public IP lookup failed: ") + ex.Message);
         }
         finally
         {

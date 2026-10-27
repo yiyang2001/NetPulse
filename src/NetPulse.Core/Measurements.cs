@@ -1,3 +1,5 @@
+using static NetPulse.Core.Lang;
+
 namespace NetPulse.Core;
 
 public readonly record struct LatencyStats(double MinMs, double MedianMs, double MaxMs, double JitterMs, int Count)
@@ -107,7 +109,7 @@ public static class WifiBands
     /// </summary>
     public static string FromChannel(uint channel) => channel switch
     {
-        0 => "未知",
+        0 => T("未知", "Unknown"),
         <= 14 => "2.4 GHz",
         _ => "5/6 GHz",
     };
@@ -117,6 +119,6 @@ public static class WifiBands
         >= 5_925_000 => "6 GHz",
         >= 4_900_000 => "5 GHz",
         >= 2_400_000 => "2.4 GHz",
-        _ => "未知",
+        _ => T("未知", "Unknown"),
     };
 }

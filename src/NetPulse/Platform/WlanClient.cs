@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 using NetPulse.Core;
+using static NetPulse.Core.Lang;
 
 namespace NetPulse.Platform;
 
@@ -175,15 +176,15 @@ internal sealed unsafe class WlanClient : IDisposable
 
     private static string StateName(uint state) => state switch
     {
-        0 => "未就绪",
-        1 => "已连接",
-        2 => "临时网络已形成",
-        3 => "正在断开",
-        4 => "未连接",
-        5 => "正在关联",
-        6 => "正在发现",
-        7 => "正在认证",
-        _ => $"状态 {state}",
+        0 => T("未就绪", "Not ready"),
+        1 => T("已连接", "Connected"),
+        2 => T("临时网络已形成", "Ad hoc network formed"),
+        3 => T("正在断开", "Disconnecting"),
+        4 => T("未连接", "Disconnected"),
+        5 => T("正在关联", "Associating"),
+        6 => T("正在发现", "Discovering"),
+        7 => T("正在认证", "Authenticating"),
+        _ => T($"状态 {state}", $"State {state}"),
     };
 
     private static string PhyName(uint phy) => phy switch
@@ -201,22 +202,22 @@ internal sealed unsafe class WlanClient : IDisposable
 
     private static string AuthName(uint algorithm) => algorithm switch
     {
-        1 => "开放",
-        2 => "共享密钥 (WEP)",
-        3 => "WPA-企业",
-        4 => "WPA-个人",
-        6 => "WPA2-企业",
-        7 => "WPA2-个人",
-        8 => "WPA3-企业 (192 位)",
-        9 => "WPA3-个人",
-        10 => "增强开放 (OWE)",
-        11 => "WPA3-企业",
-        _ => $"认证 {algorithm}",
+        1 => T("开放", "Open"),
+        2 => T("共享密钥 (WEP)", "Shared key (WEP)"),
+        3 => T("WPA-企业", "WPA-Enterprise"),
+        4 => T("WPA-个人", "WPA-Personal"),
+        6 => T("WPA2-企业", "WPA2-Enterprise"),
+        7 => T("WPA2-个人", "WPA2-Personal"),
+        8 => T("WPA3-企业 (192 位)", "WPA3-Enterprise (192-bit)"),
+        9 => T("WPA3-个人", "WPA3-Personal"),
+        10 => T("增强开放 (OWE)", "Enhanced Open (OWE)"),
+        11 => T("WPA3-企业", "WPA3-Enterprise"),
+        _ => T($"认证 {algorithm}", $"Auth {algorithm}"),
     };
 
     private static string CipherName(uint cipher) => cipher switch
     {
-        0 => "无",
+        0 => T("无", "None"),
         1 => "WEP-40",
         2 => "TKIP",
         4 => "CCMP (AES)",

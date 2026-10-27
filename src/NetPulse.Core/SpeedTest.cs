@@ -80,7 +80,7 @@ public sealed class SpeedTestRunner(HttpMessageHandler? handler = null, TimeSpan
             PooledConnectionLifetime = TimeSpan.FromMinutes(1),
         };
         var client = new HttpClient(handler) { BaseAddress = Base, Timeout = Timeout.InfiniteTimeSpan };
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("NetPulse", "0.2"));
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("NetPulse", typeof(SpeedTestRunner).Assembly.GetName().Version?.ToString(2)));
         return client;
     }
 

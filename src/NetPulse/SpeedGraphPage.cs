@@ -1,5 +1,6 @@
 using System.Drawing.Drawing2D;
 using NetPulse.Core;
+using static NetPulse.Core.Lang;
 
 namespace NetPulse;
 
@@ -13,8 +14,8 @@ internal sealed class SpeedGraphPage : UserControl, IActivatablePage
     private readonly AppSettings _settings;
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 500 };
     private readonly SpeedGraph _graph = new() { Dock = DockStyle.Fill };
-    private readonly RadioButton _shortButton = new() { Text = "最近 60 秒", AutoSize = true, Checked = true };
-    private readonly RadioButton _longButton = new() { Text = "最近 10 分钟", AutoSize = true };
+    private readonly RadioButton _shortButton = new() { Text = T("最近 60 秒", "Last 60 seconds"), AutoSize = true, Checked = true };
+    private readonly RadioButton _longButton = new() { Text = T("最近 10 分钟", "Last 10 minutes"), AutoSize = true };
     private readonly Label _currentValue = ValueLabel();
     private readonly Label _peakValue = ValueLabel();
     private readonly Label _averageValue = ValueLabel();
@@ -30,8 +31,8 @@ internal sealed class SpeedGraphPage : UserControl, IActivatablePage
             _shortButton,
             _longButton,
             new Label { Text = "   " }, // spacer; Toolbar resets margins
-            new Label { Text = "■ 下载", ForeColor = SpeedGraph.DownloadColor },
-            new Label { Text = "■ 上传", ForeColor = SpeedGraph.UploadColor });
+            new Label { Text = T("■ 下载", "■ Download"), ForeColor = SpeedGraph.DownloadColor },
+            new Label { Text = T("■ 上传", "■ Upload"), ForeColor = SpeedGraph.UploadColor });
 
         var stats = new TableLayoutPanel { Dock = DockStyle.Top, Height = 64, ColumnCount = 3, RowCount = 1 };
         for (var i = 0; i < 3; i++)
@@ -39,9 +40,9 @@ internal sealed class SpeedGraphPage : UserControl, IActivatablePage
             stats.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
         }
 
-        stats.Controls.Add(Card("当前", _currentValue), 0, 0);
-        stats.Controls.Add(Card("峰值", _peakValue), 1, 0);
-        stats.Controls.Add(Card("平均", _averageValue), 2, 0);
+        stats.Controls.Add(Card(T("当前", "Current"), _currentValue), 0, 0);
+        stats.Controls.Add(Card(T("峰值", "Peak"), _peakValue), 1, 0);
+        stats.Controls.Add(Card(T("平均", "Average"), _averageValue), 2, 0);
 
         var graphPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 8, 0, 0) };
         graphPanel.Controls.Add(_graph);
@@ -145,10 +146,10 @@ internal sealed class SpeedGraph : Control
         TextRenderer.DrawText(g, ByteFormatter.FormatSpeed(max, _unit, trimZeros: true), Font, new Point(plot.Left, plot.Top - Font.Height - 2), SystemColors.GrayText);
         TextRenderer.DrawText(g, ByteFormatter.FormatSpeed(max / 2, _unit, trimZeros: true), Font, new Point(plot.Left, plot.Top + (plot.Height / 2) - Font.Height - 2), SystemColors.GrayText);
 
-        var windowLabel = _window > TimeSpan.FromMinutes(1) ? $"{_window.TotalMinutes:0} 分钟前" : $"{_window.TotalSeconds:0} 秒前";
+        var windowLabel = _window > TimeSpan.FromMinutes(1) ? T($"{_window.TotalMinutes:0} 分钟前", $"{_window.TotalMinutes:0} min ago") : T($"{_window.TotalSeconds:0} 秒前", $"{_window.TotalSeconds:0} s ago");
         TextRenderer.DrawText(g, windowLabel, Font, new Point(plot.Left, plot.Bottom + 2), SystemColors.GrayText);
-        var nowSize = TextRenderer.MeasureText("现在", Font);
-        TextRenderer.DrawText(g, "现在", Font, new Point(plot.Right - nowSize.Width, plot.Bottom + 2), SystemColors.GrayText);
+        var nowSize = TextRenderer.MeasureText(T("现在", "now"), Font);
+        TextRenderer.DrawText(g, T("现在", "now"), Font, new Point(plot.Right - nowSize.Width, plot.Bottom + 2), SystemColors.GrayText);
 
         if (_points.Count < 2)
         {
@@ -220,7 +221,7 @@ internal sealed class SpeedGraph : Control
         var nearest = _points.MinBy(p => Math.Abs((p.Time - time).Ticks));
         var ago = (newest - nearest.Time).TotalSeconds;
         _toolTip.Show(
-            $"{(ago < 0.5 ? "现在" : $"{ago:0} 秒前")}\n↓ {ByteFormatter.FormatSpeed(nearest.DownloadBytesPerSecond, _unit)}\n↑ {ByteFormatter.FormatSpeed(nearest.UploadBytesPerSecond, _unit)}",
+            $"{(ago < 0.5 ? T("现在", "now") : T($"{ago:0} 秒前", $"{ago:0} s ago"))}\n↓ {ByteFormatter.FormatSpeed(nearest.DownloadBytesPerSecond, _unit)}\n↑ {ByteFormatter.FormatSpeed(nearest.UploadBytesPerSecond, _unit)}",
             this, _hoverX + 12, plot.Top + 8);
     }
 

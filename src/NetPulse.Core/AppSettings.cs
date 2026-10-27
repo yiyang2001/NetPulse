@@ -35,6 +35,12 @@ public sealed class AppSettings
     /// <summary>Widget colors; Auto follows the taskbar.</summary>
     public ThemeMode Theme { get; set; } = ThemeMode.Auto;
 
+    /// <summary>
+    /// UI language, applied at start-up. Null in files written before v0.3: Program keeps those users on
+    /// Chinese (the only language then) instead of switching them to their Windows language.
+    /// </summary>
+    public UiLanguage? Language { get; set; }
+
     /// <summary>Main window colors; Auto follows the Windows app mode. Applied at start-up.</summary>
     public ThemeMode WindowTheme { get; set; } = ThemeMode.Auto;
 
@@ -56,6 +62,11 @@ public sealed class AppSettings
         if (!Enum.IsDefined(Unit))
         {
             Unit = SpeedUnit.Bytes;
+        }
+
+        if (Language is { } language && !Enum.IsDefined(language))
+        {
+            Language = UiLanguage.Auto;
         }
 
         if (!Enum.IsDefined(WindowTheme))
