@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using NetPulse.Core;
+using NetPulse.Platform;
 
 namespace NetPulse;
 
@@ -19,7 +20,10 @@ internal sealed class SettingsPage : UserControl
     private readonly CheckBox _hideFullscreen = Check("全屏应用（游戏、视频、演示）时自动隐藏");
     private readonly CheckBox _lock = Check("锁定位置");
     private readonly CheckBox _clickThrough = Check("鼠标穿透（点击会穿过悬浮窗；需通过托盘菜单关闭）");
-    private readonly CheckBox _startup = Check("开机自动启动");
+    private readonly ComboBox _startup = DropDown("不启动", "启动", "以管理员身份启动（自动记录进程流量）");
+    private readonly Label _startupStatus = new() { AutoSize = true, MaximumSize = new Size(560, 0), ForeColor = SystemColors.GrayText, Padding = new Padding(0, 2, 0, 4) };
+    private readonly Button _updateInstalled = new() { Text = "用当前版本更新已安装的副本", AutoSize = true };
+    private StartupMode _startupMode;
     private readonly CheckBox _planEnabled = Check("启用流量套餐提醒");
     private readonly NumericUpDown _planLimit = Number(0.1m, 1_000_000, 1, 1);
     private readonly NumericUpDown _planDay = Number(1, 31, 1, 0);
@@ -49,7 +53,10 @@ internal sealed class SettingsPage : UserControl
             Row("字号", _fontSize)));
         layout.Controls.Add(Group(
             "行为",
-            _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _startup));
+            _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough,
+            Row("开机启动", _startup),
+            _startupStatus,
+            _updateInstalled));
         layout.Controls.Add(Group(
             "流量套餐",
             _planEnabled,
@@ -87,7 +94,15 @@ internal sealed class SettingsPage : UserControl
         }
 
         _opacity.ValueChanged += OnChanged;
-        _startup.CheckedChanged += OnStartupChanged;
+        _startup.SelectedIndexChanged += (_, _) =>
+        {
+            var mode = (StartupMode)Math.Max(0, _startup.SelectedIndex);
+            if (!_loading && mode != _startupMode)
+            {
+                ChangeStartup(mode);
+            }
+        };
+        _updateInstalled.Click += (_, _) => ChangeStartup(StartupMode.Elevated);
         Reload();
     }
 
@@ -112,7 +127,7 @@ internal sealed class SettingsPage : UserControl
             _hideFullscreen.Checked = _settings.HideWhenFullscreen;
             _lock.Checked = _settings.LockPosition;
             _clickThrough.Checked = _settings.ClickThrough;
-            _startup.Checked = StartupRegistration.IsEnabled();
+            LoadStartup();
             _planEnabled.Checked = _settings.Plan.Enabled;
             _planLimit.Value = (decimal)_settings.Plan.LimitGb;
             _planDay.Value = _settings.Plan.CycleStartDay;
@@ -157,25 +172,57 @@ internal sealed class SettingsPage : UserControl
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void OnStartupChanged(object? sender, EventArgs e)
+    /// <summary>Applies a new startup mode; the elevated mode (and leaving it) goes through a UAC prompt.</summary>
+    private void ChangeStartup(StartupMode mode)
     {
-        if (_loading)
-        {
-            return;
-        }
-
+        string? error;
+        UseWaitCursor = true;
         try
         {
-            StartupRegistration.SetEnabled(_startup.Checked);
+            error = Startup.Change(_startupMode, mode);
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
         {
-            ErrorLog.Write(ex, "StartupRegistration");
-            MessageBox.Show(this, "无法修改开机启动设置：" + ex.Message, "NetPulse", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            Reload();
+            ErrorLog.Write(ex, "Startup.Change");
+            error = ex.Message;
+        }
+        finally
+        {
+            UseWaitCursor = false;
         }
 
-        SettingsChanged?.Invoke(this, EventArgs.Empty);
+        if (error is not null)
+        {
+            MessageBox.Show(this, "无法修改开机启动设置：" + error, AppPaths.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        _loading = true;
+        try
+        {
+            LoadStartup();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void LoadStartup()
+    {
+        _startupMode = Startup.Current();
+        _startup.SelectedIndex = (int)_startupMode;
+        var installed = ElevatedAutostart.InstalledVersion();
+        var outdated = _startupMode == StartupMode.Elevated && !ElevatedAutostart.IsRunningInstalledCopy
+            && installed != ElevatedAutostart.CurrentVersion;
+        _updateInstalled.Visible = outdated;
+        _startupStatus.Text = _startupMode switch
+        {
+            StartupMode.Elevated =>
+                $"登录后由“任务计划程序”以管理员身份启动 {ElevatedAutostart.InstalledExe}（版本 {installed ?? "?"}），" +
+                "不会弹出权限提示。" + (outdated ? $"\n当前运行的是版本 {ElevatedAutostart.CurrentVersion}。" : string.Empty),
+            StartupMode.Normal => "登录后以普通权限启动，不能记录进程流量。",
+            _ => "选择“以管理员身份启动”时，NetPulse 会被复制到 Program Files，以免这个以管理员身份运行的程序被其他程序替换。",
+        };
     }
 
     private void LoadAdapters()

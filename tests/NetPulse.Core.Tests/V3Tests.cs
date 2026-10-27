@@ -183,3 +183,54 @@ public class ProcessHistoryTests
         }
     }
 }
+
+public class LogonTaskTests
+{
+    private const string Sid = "S-1-5-21-1-2-3-1001";
+
+    private static System.Xml.Linq.XElement Parse(string xml) => System.Xml.Linq.XDocument.Parse(xml).Root!;
+
+    private static string Value(System.Xml.Linq.XElement root, params string[] path)
+    {
+        var element = root;
+        foreach (var name in path)
+        {
+            element = element.Element(LogonTask.Namespace + name)!;
+        }
+
+        return element.Value;
+    }
+
+    [Fact]
+    public void StartsElevatedForThatUserAtLogon()
+    {
+        var root = Parse(LogonTask.Build(Sid, @"C:\Program Files\NetPulse\NetPulse.exe", null, "d"));
+        Assert.Equal(Sid, Value(root, "Triggers", "LogonTrigger", "UserId"));
+        Assert.Equal(Sid, Value(root, "Principals", "Principal", "UserId"));
+        Assert.Equal("InteractiveToken", Value(root, "Principals", "Principal", "LogonType"));
+        Assert.Equal("HighestAvailable", Value(root, "Principals", "Principal", "RunLevel"));
+        Assert.Equal(@"C:\Program Files\NetPulse\NetPulse.exe", Value(root, "Actions", "Exec", "Command"));
+    }
+
+    [Fact]
+    public void RunsWithoutTimeLimitAtNormalPriority()
+    {
+        var root = Parse(LogonTask.Build(Sid, "x.exe", null, "d"));
+        Assert.Equal("PT0S", Value(root, "Settings", "ExecutionTimeLimit"));
+        Assert.Equal("4", Value(root, "Settings", "Priority"));
+        Assert.Equal("IgnoreNew", Value(root, "Settings", "MultipleInstancesPolicy"));
+        Assert.Equal("false", Value(root, "Settings", "DisallowStartIfOnBatteries"));
+    }
+
+    [Fact]
+    public void ArgumentsOnlyWhenGivenAndEscaped()
+    {
+        var withoutArgs = Parse(LogonTask.Build(Sid, "x.exe", "", "d"));
+        Assert.Null(withoutArgs.Element(LogonTask.Namespace + "Actions")!.Element(LogonTask.Namespace + "Exec")!.Element(LogonTask.Namespace + "Arguments"));
+
+        var xml = LogonTask.Build(Sid, "x.exe", "--profile=dev", "a < b & c");
+        Assert.Equal("--profile=dev", Value(Parse(xml), "Actions", "Exec", "Arguments"));
+        Assert.Equal("a < b & c", Value(Parse(xml), "RegistrationInfo", "Description"));
+        Assert.StartsWith("<?xml version=\"1.0\" encoding=\"UTF-16\"?>", xml);
+    }
+}

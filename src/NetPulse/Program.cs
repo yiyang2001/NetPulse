@@ -1,3 +1,5 @@
+using NetPulse.Platform;
+
 namespace NetPulse;
 
 internal static class Program
@@ -13,13 +15,19 @@ internal static class Program
     private static readonly string InstanceMutexName = $@"Local\NetPulse{AppPaths.ProfileSuffix}.SingleInstance";
 
     [STAThread]
-    private static void Main(string[] args)
+    private static int Main(string[] args)
     {
+        // Elevated helper started by ElevatedAutostart: does its one job and exits, no UI, no instance lock.
+        if (args.FirstOrDefault(a => a is ElevatedAutostart.InstallArgument or ElevatedAutostart.RemoveArgument) is { } helper)
+        {
+            return ElevatedAutostart.RunHelper(helper);
+        }
+
         using var instance = AcquireSingleInstance(args.Contains(RestartedArgument));
         if (instance is null)
         {
             SignalRunningInstance();
-            return;
+            return 0;
         }
 
         ApplicationConfiguration.Initialize();
@@ -36,6 +44,7 @@ internal static class Program
 
         // Hand the mutex over cleanly, e.g. to the elevated copy waiting in AcquireSingleInstance.
         instance.ReleaseMutex();
+        return 0;
     }
 
     /// <summary>Returns the owned mutex, or null if another instance is running.</summary>

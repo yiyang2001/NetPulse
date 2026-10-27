@@ -171,6 +171,12 @@ internal sealed class NetPulseContext : ApplicationContext
         _topMostItem.Click += (_, _) => Toggle(s => s.AlwaysOnTop = !s.AlwaysOnTop);
         _startupItem.Click += (_, _) =>
         {
+            if (Startup.Current() == StartupMode.Elevated)
+            {
+                ShowMainWindow(MainTab.Settings); // leaving it needs a UAC prompt; let the user choose there
+                return;
+            }
+
             try
             {
                 StartupRegistration.SetEnabled(!StartupRegistration.IsEnabled());
@@ -202,7 +208,7 @@ internal sealed class NetPulseContext : ApplicationContext
             _topMostItem.Checked = _settings.AlwaysOnTop;
             _lockItem.Checked = _settings.LockPosition;
             _clickThroughItem.Checked = _settings.ClickThrough;
-            _startupItem.Checked = StartupRegistration.IsEnabled();
+            _startupItem.Checked = Startup.Current() != StartupMode.Off;
         };
     }
 

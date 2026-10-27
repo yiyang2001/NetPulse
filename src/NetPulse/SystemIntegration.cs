@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using NetPulse.Core;
+using NetPulse.Platform;
 
 namespace NetPulse;
 
@@ -36,6 +37,48 @@ internal static class StartupRegistration
         {
             SetEnabled(true);
         }
+    }
+}
+
+internal enum StartupMode
+{
+    Off,
+    Normal,
+    Elevated,
+}
+
+/// <summary>The two ways of starting with Windows, kept mutually exclusive.</summary>
+internal static class Startup
+{
+    public static StartupMode Current() =>
+        ElevatedAutostart.IsEnabled() ? StartupMode.Elevated
+        : StartupRegistration.IsEnabled() ? StartupMode.Normal
+        : StartupMode.Off;
+
+    /// <summary>
+    /// Switches modes; anything involving <see cref="StartupMode.Elevated"/> shows a UAC prompt.
+    /// Elevated → Elevated re-installs, i.e. updates the installed copy. Returns null on success, else why not.
+    /// </summary>
+    public static string? Change(StartupMode from, StartupMode to)
+    {
+        if (to == StartupMode.Elevated)
+        {
+            var error = ElevatedAutostart.RequestInstall();
+            if (error is null)
+            {
+                StartupRegistration.SetEnabled(false);
+            }
+
+            return error;
+        }
+
+        if (from == StartupMode.Elevated && ElevatedAutostart.RequestRemove() is { } removeError)
+        {
+            return removeError;
+        }
+
+        StartupRegistration.SetEnabled(to == StartupMode.Normal);
+        return null;
     }
 }
 
