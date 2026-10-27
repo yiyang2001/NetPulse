@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Version>0.2.0</Version>
+    <Company>NetPulse</Company>
+    <Product>NetPulse</Product>
+    <Copyright>NetPulse contributors</Copyright>
+  </PropertyGroup>
+</Project>
