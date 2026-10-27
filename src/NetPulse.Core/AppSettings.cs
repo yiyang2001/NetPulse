@@ -32,7 +32,11 @@ public sealed class AppSettings
 
     public float FontSize { get; set; } = 9f;
 
+    /// <summary>Widget colors; Auto follows the taskbar.</summary>
     public ThemeMode Theme { get; set; } = ThemeMode.Auto;
+
+    /// <summary>Main window colors; Auto follows the Windows app mode. Applied at start-up.</summary>
+    public ThemeMode WindowTheme { get; set; } = ThemeMode.Auto;
 
     public int? WidgetX { get; set; }
 
@@ -52,6 +56,11 @@ public sealed class AppSettings
         if (!Enum.IsDefined(Unit))
         {
             Unit = SpeedUnit.Bytes;
+        }
+
+        if (!Enum.IsDefined(WindowTheme))
+        {
+            WindowTheme = ThemeMode.Auto;
         }
 
         if (!Enum.IsDefined(Theme))

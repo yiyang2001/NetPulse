@@ -1,3 +1,4 @@
+using NetPulse.Core;
 using NetPulse.Platform;
 
 namespace NetPulse;
@@ -31,13 +32,20 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        var settings = NetPulseContext.SettingsStore.Load().Normalize();
+        Application.SetColorMode(settings.WindowTheme switch
+        {
+            ThemeMode.Dark => SystemColorMode.Dark,
+            ThemeMode.Light => SystemColorMode.Classic,
+            _ => SystemColorMode.System,
+        });
         Application.SetDefaultFont(CreateUiFont());
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) => ErrorLog.Write(e.Exception, "UI thread");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => ErrorLog.Write(e.ExceptionObject as Exception, "Unhandled");
 
         var open = args.FirstOrDefault(a => a.StartsWith(OpenArgumentPrefix, StringComparison.Ordinal))?[OpenArgumentPrefix.Length..];
-        using (var context = new NetPulseContext(Enum.TryParse<MainTab>(open, ignoreCase: true, out var tab) ? tab : null))
+        using (var context = new NetPulseContext(settings, Enum.TryParse<MainTab>(open, ignoreCase: true, out var tab) ? tab : null))
         {
             Application.Run(context);
         }

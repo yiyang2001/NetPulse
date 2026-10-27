@@ -34,7 +34,7 @@ internal sealed class UsagePage : UserControl, IActivatablePage
         _saveUsage = saveUsage;
         Padding = new Padding(12);
 
-        _list.Columns.Add("日期", 120);
+        _list.Columns.Add("日期", 150);
         _list.Columns.Add("下载", 120, HorizontalAlignment.Right);
         _list.Columns.Add("上传", 120, HorizontalAlignment.Right);
         _list.Columns.Add("合计", 120, HorizontalAlignment.Right);

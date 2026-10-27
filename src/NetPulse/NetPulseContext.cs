@@ -12,7 +12,7 @@ internal sealed class NetPulseContext : ApplicationContext
 {
     private static readonly TimeSpan SaveInterval = TimeSpan.FromMinutes(1);
 
-    private readonly JsonFileStore<AppSettings> _settingsStore =
+    internal static readonly JsonFileStore<AppSettings> SettingsStore =
         new(AppPaths.SettingsFile, () => new AppSettings());
     private readonly JsonFileStore<UsageDocument> _usageStore =
         new(AppPaths.UsageFile, () => new UsageDocument());
@@ -43,10 +43,11 @@ internal sealed class NetPulseContext : ApplicationContext
     private SettingsPage? _settingsPage;
     private volatile bool _exiting; // also read by the show-window callback on a pool thread
 
+    /// <param name="settings">Loaded by Program, which needs them before any window exists.</param>
     /// <param name="openTab">Tab to show right away, e.g. after an elevated restart.</param>
-    public NetPulseContext(MainTab? openTab = null)
+    public NetPulseContext(AppSettings settings, MainTab? openTab = null)
     {
-        _settings = _settingsStore.Load().Normalize();
+        _settings = settings;
         var ledger = new UsageLedger(_usageStore.Load().Days ?? []);
         _monitor = new TrafficMonitor(ledger);
         _processTraffic = new ProcessTrafficService(new ProcessUsageLedger(_processUsageStore.Load().Days ?? []));
@@ -369,7 +370,7 @@ internal sealed class NetPulseContext : ApplicationContext
     {
         try
         {
-            _settingsStore.Save(_settings);
+            SettingsStore.Save(_settings);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

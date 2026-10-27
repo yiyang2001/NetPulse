@@ -13,6 +13,7 @@ internal sealed class SettingsPage : UserControl
     private readonly ComboBox _adapter = DropDown();
     private readonly CheckBox _excludeVirtual = Check("自动模式下排除虚拟网卡（VPN、Hyper-V 等，避免重复计算）");
     private readonly ComboBox _theme = DropDown("跟随任务栏", "深色", "浅色");
+    private readonly ComboBox _windowTheme = DropDown("跟随 Windows 应用模式", "深色", "浅色");
     private readonly TrackBar _opacity = new() { Minimum = 30, Maximum = 100, TickFrequency = 10, Width = 220, AutoSize = false, Height = 32 };
     private readonly NumericUpDown _fontSize = Number(7, 24, 0.5m, 1);
     private readonly CheckBox _showWidget = Check("显示悬浮窗");
@@ -48,7 +49,8 @@ internal sealed class SettingsPage : UserControl
             Row("刷新间隔（毫秒）", _interval),
             Row("网卡", _adapter),
             _excludeVirtual,
-            Row("主题", _theme),
+            Row("悬浮窗主题", _theme),
+            Row("窗口主题（重启生效）", _windowTheme),
             Row("不透明度", _opacity),
             Row("字号", _fontSize)));
         layout.Controls.Add(Group(
@@ -78,7 +80,7 @@ internal sealed class SettingsPage : UserControl
             openFolder));
         Controls.Add(layout);
 
-        foreach (var combo in new[] { _unit, _adapter, _theme })
+        foreach (var combo in new[] { _unit, _adapter, _theme, _windowTheme })
         {
             combo.SelectedIndexChanged += OnChanged;
         }
@@ -120,6 +122,7 @@ internal sealed class SettingsPage : UserControl
             LoadAdapters();
             _excludeVirtual.Checked = _settings.ExcludeVirtualAdapters;
             _theme.SelectedIndex = (int)_settings.Theme;
+            _windowTheme.SelectedIndex = (int)_settings.WindowTheme;
             _opacity.Value = (int)Math.Round(_settings.Opacity * 100);
             _fontSize.Value = (decimal)_settings.FontSize;
             _showWidget.Checked = _settings.ShowWidget;
@@ -154,6 +157,7 @@ internal sealed class SettingsPage : UserControl
         _settings.AdapterId = (_adapter.SelectedItem as AdapterItem)?.Id;
         _settings.ExcludeVirtualAdapters = _excludeVirtual.Checked;
         _settings.Theme = (ThemeMode)Math.Max(0, _theme.SelectedIndex);
+        _settings.WindowTheme = (ThemeMode)Math.Max(0, _windowTheme.SelectedIndex);
         _settings.Opacity = _opacity.Value / 100.0;
         _settings.FontSize = (float)_fontSize.Value;
         _settings.ShowWidget = _showWidget.Checked;
@@ -277,7 +281,7 @@ internal sealed class SettingsPage : UserControl
     private static FlowLayoutPanel Row(string label, Control control)
     {
         var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
-        row.Controls.Add(new Label { Text = label, Width = 150, TextAlign = ContentAlignment.MiddleLeft, Height = 28 });
+        row.Controls.Add(new Label { Text = label, Width = 180, TextAlign = ContentAlignment.MiddleLeft, Height = 28 });
         row.Controls.Add(control);
         return row;
     }
