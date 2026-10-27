@@ -16,6 +16,8 @@ internal sealed class NetPulseContext : ApplicationContext
         new(AppPaths.SettingsFile, () => new AppSettings());
     private readonly JsonFileStore<UsageDocument> _usageStore =
         new(AppPaths.UsageFile, () => new UsageDocument());
+    private readonly JsonFileStore<ProcessUsageDocument> _processUsageStore =
+        new(AppPaths.ProcessUsageFile, () => new ProcessUsageDocument());
 
     private readonly AppSettings _settings;
     private readonly TrafficMonitor _monitor;
@@ -34,7 +36,7 @@ internal sealed class NetPulseContext : ApplicationContext
     private readonly RegisteredWaitHandle _showWindowRegistration;
     private DateTime _lastSave = DateTime.UtcNow;
     private DateTime _lastToolTip = DateTime.MinValue;
-    private readonly ProcessTrafficService _processTraffic = new();
+    private readonly ProcessTrafficService _processTraffic;
     private readonly SpeedHistory _speedHistory = new(TimeSpan.FromMinutes(10));
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     private MainWindow? _mainWindow;
@@ -47,6 +49,7 @@ internal sealed class NetPulseContext : ApplicationContext
         _settings = _settingsStore.Load().Normalize();
         var ledger = new UsageLedger(_usageStore.Load().Days ?? []);
         _monitor = new TrafficMonitor(ledger);
+        _processTraffic = new ProcessTrafficService(new ProcessUsageLedger(_processUsageStore.Load().Days ?? []));
 
         using (var stream = typeof(NetPulseContext).Assembly.GetManifestResourceStream("NetPulse.ico"))
         {
@@ -116,6 +119,11 @@ internal sealed class NetPulseContext : ApplicationContext
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         SystemEvents.SessionEnding += OnSessionEnding;
         StartupRegistration.RefreshPathIfEnabled();
+        if (Elevation.IsAdministrator)
+        {
+            _processTraffic.TryStart(); // per-program history is recorded whenever we can
+        }
+
         CheckDataPlan();
         if (openTab is { } tab)
         {
@@ -250,6 +258,7 @@ internal sealed class NetPulseContext : ApplicationContext
     {
         UpdateWidgetVisibility();
         _widget.BringToTopIfTopMost();
+        _processTraffic.RecordHistory();
 
         if (DateTime.UtcNow - _lastSave >= SaveInterval)
         {
@@ -311,7 +320,7 @@ internal sealed class NetPulseContext : ApplicationContext
             [
                 (MainTab.Usage, "流量统计", new UsagePage(_monitor.Ledger, _settings, SaveUsage)),
                 (MainTab.Graph, "实时速度", new SpeedGraphPage(_speedHistory, _settings)),
-                (MainTab.Processes, "进程流量",new ProcessTrafficPage(_processTraffic, RestartElevated)),
+                (MainTab.Processes, "进程流量",new ProcessTrafficPage(_processTraffic, _settings, RestartElevated)),
                 (MainTab.Wifi, "Wi-Fi", new WifiPage()),
                 (MainTab.SpeedTest, "测速", new SpeedTestPage()),
                 (MainTab.Tools, "网络工具", new NetworkToolsPage()),
@@ -362,24 +371,40 @@ internal sealed class NetPulseContext : ApplicationContext
         }
     }
 
+    /// <summary>Saves the daily totals and the per-program history, whichever changed.</summary>
     private void SaveUsage()
     {
         _lastSave = DateTime.UtcNow;
+        var keepFrom = DateOnly.FromDateTime(DateTime.Now).AddDays(-_settings.UsageRetentionDays);
         var ledger = _monitor.Ledger;
-        ledger.Prune(DateOnly.FromDateTime(DateTime.Now).AddDays(-_settings.UsageRetentionDays));
-        if (!ledger.IsDirty)
+        ledger.Prune(keepFrom);
+        if (ledger.IsDirty)
         {
-            return;
+            try
+            {
+                _usageStore.Save(new UsageDocument { Days = [.. ledger.ToList()] });
+                ledger.MarkSaved();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                ErrorLog.Write(ex, "SaveUsage");
+            }
         }
 
-        try
+        _processTraffic.RecordHistory();
+        var history = _processTraffic.History;
+        history.Prune(keepFrom);
+        if (history.IsDirty)
         {
-            _usageStore.Save(new UsageDocument { Days = [.. ledger.ToList()] });
-            ledger.MarkSaved();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            ErrorLog.Write(ex, "SaveUsage");
+            try
+            {
+                _processUsageStore.Save(history.ToDocument());
+                history.MarkSaved();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                ErrorLog.Write(ex, "SaveProcessUsage");
+            }
         }
     }
 

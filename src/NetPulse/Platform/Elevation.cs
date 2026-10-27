@@ -22,7 +22,8 @@ internal static class Elevation
             using var process = Process.Start(new ProcessStartInfo
             {
                 FileName = exe,
-                Arguments = $"{Program.RestartedArgument} {Program.OpenArgumentPrefix}{openTab}",
+                // UAC does not pass our environment on, so a NETPULSE_PROFILE must go on the command line.
+                Arguments = $"{Program.RestartedArgument} {Program.OpenArgumentPrefix}{openTab}{AppPaths.ProfileArgument}",
                 UseShellExecute = true,
                 Verb = "runas",
             });

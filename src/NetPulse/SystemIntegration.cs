@@ -21,7 +21,7 @@ internal static class StartupRegistration
         if (enabled)
         {
             var exe = Environment.ProcessPath ?? Application.ExecutablePath;
-            key.SetValue(ValueName, $"\"{exe}\"", RegistryValueKind.String);
+            key.SetValue(ValueName, $"\"{exe}\"{AppPaths.ProfileArgument}", RegistryValueKind.String);
         }
         else
         {

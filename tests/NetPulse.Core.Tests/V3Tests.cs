@@ -90,3 +90,96 @@ public class AxisFormatTests
         Assert.Equal(expected, ByteFormatter.FormatSpeed(bytesPerSecond, SpeedUnit.Bytes, System.Globalization.CultureInfo.InvariantCulture, trimZeros: true));
     }
 }
+
+public class ProcessHistoryTests
+{
+    private static readonly DateOnly Day1 = new(2026, 10, 1);
+    private static readonly DateOnly Day2 = new(2026, 10, 2);
+
+    private static Dictionary<int, TrafficCounters> Counters(params (int Pid, long Down, long Up)[] rows) =>
+        rows.ToDictionary(r => r.Pid, r => new TrafficCounters(r.Down, r.Up));
+
+    [Fact]
+    public void RecordsGrowthUnderProgramName()
+    {
+        var names = new Dictionary<int, string> { [10] = "chrome", [11] = "chrome", [20] = "steam" };
+        var recorder = new ProcessHistoryRecorder(new ProcessUsageLedger(), pid => names[pid]);
+
+        recorder.Record(Counters((10, 100, 10), (20, 1000, 0)), Day1);
+        recorder.Record(Counters((10, 150, 10), (11, 50, 5), (20, 1000, 0)), Day1);
+
+        var totals = recorder.Ledger.Totals(Day1, Day1);
+        Assert.Equal(new[] { new AppUsage("steam", 1000, 0), new AppUsage("chrome", 200, 15) }, totals);
+    }
+
+    [Fact]
+    public void CounterResetCountsNewBytesOnly()
+    {
+        var recorder = new ProcessHistoryRecorder(new ProcessUsageLedger(), _ => "app");
+        recorder.Record(Counters((1, 500, 0)), Day1);
+        recorder.Record(Counters((1, 30, 0)), Day1); // table was cleared, then 30 bytes arrived
+
+        Assert.Equal(530, recorder.Ledger.Totals(Day1, Day1).Single().Downloaded);
+    }
+
+    [Fact]
+    public void ResetBaselineAfterClearDoesNotDoubleCount()
+    {
+        var recorder = new ProcessHistoryRecorder(new ProcessUsageLedger(), _ => "app");
+        recorder.Record(Counters((1, 500, 0)), Day1);
+        recorder.ResetBaseline();
+        recorder.Record(Counters((1, 700, 0)), Day1); // counters restarted at 0 and reached 700
+
+        Assert.Equal(1200, recorder.Ledger.Totals(Day1, Day1).Single().Downloaded);
+    }
+
+    [Fact]
+    public void BooksIntoTheDateOfEachCall()
+    {
+        var recorder = new ProcessHistoryRecorder(new ProcessUsageLedger(), _ => "app");
+        recorder.Record(Counters((1, 100, 0)), Day1);
+        recorder.Record(Counters((1, 250, 0)), Day2);
+
+        Assert.Equal(100, recorder.Ledger.Totals(Day1, Day1).Single().Downloaded);
+        Assert.Equal(150, recorder.Ledger.Totals(Day2, Day2).Single().Downloaded);
+        Assert.Equal(250, recorder.Ledger.Totals(Day1, Day2).Single().Downloaded);
+    }
+
+    [Fact]
+    public void LedgerRoundTripsThroughDocumentAndMergesNamesIgnoringCase()
+    {
+        var ledger = new ProcessUsageLedger();
+        ledger.Add(Day1, "Code", 10, 1);
+        ledger.Add(Day1, "code", 5, 0);
+        ledger.Add(Day2, "steam", 0, 0); // nothing to book
+        Assert.True(ledger.IsDirty);
+
+        var copy = new ProcessUsageLedger(ledger.ToDocument().Days);
+        Assert.False(copy.IsDirty);
+        Assert.Equal(new[] { new AppUsage("Code", 15, 1) }, copy.Totals(Day1, Day2));
+
+        copy.Prune(Day2);
+        Assert.Empty(copy.Totals(Day1, Day2));
+        Assert.True(copy.IsDirty);
+    }
+
+    [Fact]
+    public void LedgerSurvivesJsonStore()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"netpulse-test-{Guid.NewGuid():N}.json");
+        try
+        {
+            var store = new JsonFileStore<ProcessUsageDocument>(path, () => new ProcessUsageDocument());
+            var ledger = new ProcessUsageLedger();
+            ledger.Add(Day1, "firefox", 123, 45);
+            store.Save(ledger.ToDocument());
+
+            var loaded = new ProcessUsageLedger(store.Load().Days);
+            Assert.Equal(new[] { new AppUsage("firefox", 123, 45) }, loaded.Totals(Day1, Day1));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+}
