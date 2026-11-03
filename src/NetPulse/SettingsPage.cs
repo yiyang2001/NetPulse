@@ -36,11 +36,22 @@ internal sealed class SettingsPage : UserControl
     private readonly NumericUpDown _planWarn = Number(1, 100, 5, 0);
     private readonly CheckBox _planUpload = Check(T("上传流量也计入套餐", "Count uploads towards the plan"));
     private readonly NumericUpDown _retention = Number(31, 3660, 30, 0);
+    private readonly CheckBox _speedAlert = Check(T("速度持续偏高时提醒（用于发现后台上传）", "Alert when the speed stays high (to spot background uploads)"));
+    private readonly ComboBox _speedAlertDirection = DropDown(T("上传", "Upload"), T("下载", "Download"));
+    private readonly NumericUpDown _speedAlertLimit = Number(0.01m, 100_000, 0.5m, 2);
+    private readonly NumericUpDown _speedAlertMinutes = Number(1, 240, 1, 0);
+    private readonly CheckBox _programAlert = Check(T("某个程序当天流量超出设定值时提醒（需要以管理员身份运行）", "Alert when a program exceeds a daily amount (needs administrator rights)"));
+    private readonly NumericUpDown _programAlertLimit = Number(1, 100_000_000, 100, 0);
+    private readonly CheckBox _weeklySummary = Check(T("每周一用通知显示上周流量", "Show last week's traffic in a notification on Mondays"));
+    private readonly Action<string> _exportBackup;
+    private readonly Action<string> _importBackup;
     private bool _loading;
 
-    public SettingsPage(AppSettings settings)
+    public SettingsPage(AppSettings settings, Action<string> exportBackup, Action<string> importBackup)
     {
         _settings = settings;
+        _exportBackup = exportBackup;
+        _importBackup = importBackup;
         AutoScroll = true;
         Padding = new Padding(12);
 
@@ -76,6 +87,19 @@ internal sealed class SettingsPage : UserControl
             Row(T("提醒阈值（%）", "Warn at (%)"), _planWarn),
             _planUpload));
         layout.Controls.Add(Group(
+            T("提醒", "Alerts"),
+            _speedAlert,
+            Row(T("方向", "Direction"), _speedAlertDirection),
+            Row(T("速度超过（MB/s）", "Speed above (MB/s)"), _speedAlertLimit),
+            Row(T("持续（分钟）", "For (minutes)"), _speedAlertMinutes),
+            _programAlert,
+            Row(T("每个程序每天超过（MB）", "Per program per day above (MB)"), _programAlertLimit),
+            _weeklySummary));
+        var exportButton = new Button { Text = T("备份设置和统计…", "Back up settings and statistics…"), AutoSize = true };
+        exportButton.Click += (_, _) => ExportBackup();
+        var importButton = new Button { Text = T("从备份恢复…", "Restore from a backup…"), AutoSize = true };
+        importButton.Click += (_, _) => ImportBackup();
+        layout.Controls.Add(Group(
             T("数据与隐私", "Data and privacy"),
             Row(T("统计保留天数", "Keep statistics (days)"), _retention),
             new Label
@@ -86,20 +110,22 @@ internal sealed class SettingsPage : UserControl
                     T("Ping / 路由追踪 / DNS 查询时才会联网，且只连接对应的目标。\n所有设置和统计只保存在本机：", "or use Ping / Traceroute / DNS lookup, and then only contacts that target.\nAll settings and statistics stay on this PC: ") + AppPaths.DataDirectory,
                 Padding = new Padding(0, 6, 0, 6),
             },
-            openFolder));
+            openFolder,
+            exportButton,
+            importButton));
         Controls.Add(layout);
 
-        foreach (var combo in new[] { _unit, _adapter, _theme, _windowTheme, _language, _layout, _trayIcon })
+        foreach (var combo in new[] { _unit, _adapter, _theme, _windowTheme, _language, _layout, _trayIcon, _speedAlertDirection })
         {
             combo.SelectedIndexChanged += OnChanged;
         }
 
-        foreach (var number in new[] { _interval, _fontSize, _planLimit, _planDay, _planWarn, _retention })
+        foreach (var number in new[] { _interval, _fontSize, _planLimit, _planDay, _planWarn, _retention, _speedAlertLimit, _speedAlertMinutes, _programAlertLimit })
         {
             number.ValueChanged += OnChanged;
         }
 
-        foreach (var check in new[] { _miniGraph, _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
+        foreach (var check in new[] { _speedAlert, _programAlert, _weeklySummary, _miniGraph, _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
         {
             check.CheckedChanged += OnChanged;
         }
@@ -150,6 +176,13 @@ internal sealed class SettingsPage : UserControl
             _planWarn.Value = _settings.Plan.WarnPercent;
             _planUpload.Checked = _settings.Plan.CountUpload;
             _retention.Value = _settings.UsageRetentionDays;
+            _speedAlert.Checked = _settings.SpeedAlert.Enabled;
+            _speedAlertDirection.SelectedIndex = (int)_settings.SpeedAlert.Direction;
+            _speedAlertLimit.Value = (decimal)_settings.SpeedAlert.ThresholdMBps;
+            _speedAlertMinutes.Value = _settings.SpeedAlert.Minutes;
+            _programAlert.Checked = _settings.ProgramAlert.Enabled;
+            _programAlertLimit.Value = (decimal)_settings.ProgramAlert.LimitMb;
+            _weeklySummary.Checked = _settings.WeeklySummary;
             UpdatePlanEnabledState();
         }
         finally
@@ -188,6 +221,13 @@ internal sealed class SettingsPage : UserControl
         _settings.Plan.WarnPercent = (int)_planWarn.Value;
         _settings.Plan.CountUpload = _planUpload.Checked;
         _settings.UsageRetentionDays = (int)_retention.Value;
+        _settings.SpeedAlert.Enabled = _speedAlert.Checked;
+        _settings.SpeedAlert.Direction = (SpeedAlertDirection)Math.Max(0, _speedAlertDirection.SelectedIndex);
+        _settings.SpeedAlert.ThresholdMBps = (double)_speedAlertLimit.Value;
+        _settings.SpeedAlert.Minutes = (int)_speedAlertMinutes.Value;
+        _settings.ProgramAlert.Enabled = _programAlert.Checked;
+        _settings.ProgramAlert.LimitMb = (double)_programAlertLimit.Value;
+        _settings.WeeklySummary = _weeklySummary.Checked;
         _settings.Normalize();
         UpdatePlanEnabledState();
         SettingsChanged?.Invoke(this, EventArgs.Empty);
@@ -269,7 +309,60 @@ internal sealed class SettingsPage : UserControl
     private void UpdatePlanEnabledState()
     {
         _planLimit.Enabled = _planDay.Enabled = _planWarn.Enabled = _planUpload.Enabled = _planEnabled.Checked;
+        _speedAlertDirection.Enabled = _speedAlertLimit.Enabled = _speedAlertMinutes.Enabled = _speedAlert.Checked;
+        _programAlertLimit.Enabled = _programAlert.Checked;
     }
+
+    private void ExportBackup()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Filter = T("NetPulse 备份 (*.json)|*.json", "NetPulse backup (*.json)|*.json"),
+            FileName = $"NetPulse-backup-{DateTime.Now:yyyyMMdd}.json",
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            _exportBackup(dialog.FileName);
+            MessageBox.Show(this, T("备份已保存。", "Backup saved."), AppPaths.AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, T("备份失败：", "Backup failed: ") + ex.Message, AppPaths.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void ImportBackup()
+    {
+        using var dialog = new OpenFileDialog { Filter = T("NetPulse 备份 (*.json)|*.json", "NetPulse backup (*.json)|*.json") };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            this,
+            T("恢复会用备份中的设置和统计替换当前的全部内容，然后重启 NetPulse。要继续吗？", "Restoring replaces all current settings and statistics with those in the backup, then restarts NetPulse. Continue?"),
+            AppPaths.AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            _importBackup(dialog.FileName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            MessageBox.Show(this, T("恢复失败：", "Restore failed: ") + ex.Message, AppPaths.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     private void OpenDataFolder()
     {
         Directory.CreateDirectory(AppPaths.DataDirectory);

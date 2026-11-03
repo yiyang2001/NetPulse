@@ -18,6 +18,7 @@ internal sealed class UsagePage : UserControl, IActivatablePage
     private readonly Action _saveSettings;
     private readonly ComboBox _network = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
     private readonly Button _networkPlanButton = new() { Text = T("此网络的套餐…", "Plan for this network…"), AutoSize = true };
+    private readonly ComboBox _range = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
     private string? _networkKey; // null: all networks
     private bool _loadingNetworks;
     private readonly Label _todayValue = ValueLabel();
@@ -84,7 +85,10 @@ internal sealed class UsagePage : UserControl, IActivatablePage
                 RefreshData();
             }
         };
-        var networkBar = Ui.Toolbar(new Label { Text = T("网络", "Network") }, _network);
+        _range.Items.AddRange([T("最近 7 天", "Last 7 days"), T("最近 30 天", "Last 30 days"), T("最近 12 个月", "Last 12 months")]);
+        _range.SelectedIndex = 1;
+        _range.SelectedIndexChanged += (_, _) => RefreshData();
+        var networkBar = Ui.Toolbar(new Label { Text = T("网络", "Network") }, _network, new Label { Text = T("范围", "Range") }, _range);
 
         // Dock order: last added is laid out first.
         Controls.Add(_list);
@@ -179,8 +183,12 @@ internal sealed class UsagePage : UserControl, IActivatablePage
             _planBar.Visible = false;
         }
 
-        var days = ledger.Range(today.AddDays(-(ChartDays - 1)), today);
-        _chart.SetData(days);
+        var monthly = _range.SelectedIndex == 2;
+        var days = monthly
+            ? ledger.Months(12, today)
+            : ledger.Range(today.AddDays(-((_range.SelectedIndex == 0 ? 7 : ChartDays) - 1)), today);
+        _chart.SetData(days, monthly);
+        _list.Columns[0].Text = monthly ? T("月份", "Month") : T("日期", "Date");
 
         _list.BeginUpdate();
         _list.Items.Clear();
@@ -188,7 +196,7 @@ internal sealed class UsagePage : UserControl, IActivatablePage
         {
             _list.Items.Add(new ListViewItem(
             [
-                $"{day.Date:yyyy-MM-dd} {WeekdayNames[(int)day.Date.DayOfWeek]}",
+                monthly ? $"{day.Date:yyyy-MM}" : $"{day.Date:yyyy-MM-dd} {WeekdayNames[(int)day.Date.DayOfWeek]}",
                 ByteFormatter.FormatSize(day.Downloaded),
                 ByteFormatter.FormatSize(day.Uploaded),
                 ByteFormatter.FormatSize(day.Total),

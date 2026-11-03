@@ -82,6 +82,24 @@ public sealed class UsageLedger
         return result;
     }
 
+    /// <summary>
+    /// The <paramref name="count"/> calendar months up to and including the one of <paramref name="today"/>,
+    /// oldest first, each as one entry dated the 1st (months without traffic are zero).
+    /// </summary>
+    public IReadOnlyList<DailyUsage> Months(int count, DateOnly today)
+    {
+        var result = new List<DailyUsage>();
+        var first = new DateOnly(today.Year, today.Month, 1).AddMonths(-(Math.Max(1, count) - 1));
+        for (var start = first; start <= today; start = start.AddMonths(1))
+        {
+            var end = start.AddMonths(1).AddDays(-1);
+            var sum = Sum(start, end);
+            result.Add(new DailyUsage(start, sum.Downloaded, sum.Uploaded));
+        }
+
+        return result;
+    }
+
     /// <summary>Drops days before <paramref name="keepFrom"/>.</summary>
     public void Prune(DateOnly keepFrom)
     {

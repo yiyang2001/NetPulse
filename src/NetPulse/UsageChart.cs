@@ -11,6 +11,7 @@ internal sealed class UsageChart : Control
     private readonly ToolTip _toolTip = new();
     private IReadOnlyList<DailyUsage> _days = [];
     private int _hoverIndex = -1;
+    private bool _monthly;
 
     public UsageChart()
     {
@@ -18,9 +19,11 @@ internal sealed class UsageChart : Control
         BackColor = SystemColors.Window;
     }
 
-    public void SetData(IReadOnlyList<DailyUsage> days)
+    /// <param name="monthly">Each entry is a whole month (dated the 1st) and is labelled as one.</param>
+    public void SetData(IReadOnlyList<DailyUsage> days, bool monthly = false)
     {
         _days = days;
+        _monthly = monthly;
         Invalidate();
     }
 
@@ -59,8 +62,8 @@ internal sealed class UsageChart : Control
             g.FillRectangle(upBrush, x, plot.Bottom - downHeight - upHeight, barWidth, upHeight);
         }
 
-        var first = _days[0].Date.ToString("M/d");
-        var last = _days[^1].Date.ToString("M/d");
+        var first = _days[0].Date.ToString(_monthly ? "yyyy-MM" : "M/d");
+        var last = _days[^1].Date.ToString(_monthly ? "yyyy-MM" : "M/d");
         TextRenderer.DrawText(g, first, Font, new Point(plot.Left, plot.Bottom + 2), SystemColors.GrayText);
         var lastSize = TextRenderer.MeasureText(last, Font);
         TextRenderer.DrawText(g, last, Font, new Point(plot.Right - lastSize.Width, plot.Bottom + 2), SystemColors.GrayText);
@@ -88,7 +91,7 @@ internal sealed class UsageChart : Control
 
         var day = _days[index];
         _toolTip.Show(
-            $"{day.Date:yyyy-MM-dd}\n↓ {ByteFormatter.FormatSize(day.Downloaded)}\n↑ {ByteFormatter.FormatSize(day.Uploaded)}",
+            $"{day.Date.ToString(_monthly ? "yyyy-MM" : "yyyy-MM-dd")}\n↓ {ByteFormatter.FormatSize(day.Downloaded)}\n↑ {ByteFormatter.FormatSize(day.Uploaded)}",
             this, e.X + 12, e.Y + 12);
     }
 

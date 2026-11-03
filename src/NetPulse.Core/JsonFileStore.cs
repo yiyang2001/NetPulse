@@ -3,6 +3,16 @@ using System.Text.Json.Serialization;
 
 namespace NetPulse.Core;
 
+/// <summary>The JSON format of every file NetPulse writes, including backups.</summary>
+public static class AppJson
+{
+    public static readonly JsonSerializerOptions Options = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() },
+    };
+}
+
 /// <summary>
 /// Loads and saves one JSON document. Writes go to a temporary file that then replaces the target,
 /// so a crash or power loss never leaves a half-written file. An unreadable file is moved aside
@@ -11,11 +21,7 @@ namespace NetPulse.Core;
 public sealed class JsonFileStore<T>(string path, Func<T> createDefault)
     where T : class
 {
-    private static readonly JsonSerializerOptions Options = new()
-    {
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() },
-    };
+    private static readonly JsonSerializerOptions Options = AppJson.Options;
 
     public string Path { get; } = path;
 

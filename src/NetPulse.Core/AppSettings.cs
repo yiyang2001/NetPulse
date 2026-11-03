@@ -83,6 +83,16 @@ public sealed class AppSettings
 
     public DataPlanSettings Plan { get; set; } = new();
 
+    public SpeedAlertSettings SpeedAlert { get; set; } = new();
+
+    public ProgramAlertSettings ProgramAlert { get; set; } = new();
+
+    /// <summary>Notification on Monday with last week's traffic.</summary>
+    public bool WeeklySummary { get; set; } = true;
+
+    /// <summary>Monday of the week whose summary was shown last, so each is shown once.</summary>
+    public DateOnly? WeeklySummaryShownFor { get; set; }
+
     /// <summary>Own plans for single networks (e.g. a phone hotspot), by <see cref="NetworkIdentity.Key"/>; checked on top of <see cref="Plan"/>.</summary>
     public Dictionary<string, DataPlanSettings> NetworkPlans { get; set; } = [];
 
@@ -130,6 +140,10 @@ public sealed class AppSettings
 
         Plan ??= new DataPlanSettings();
         Plan.Normalize();
+        SpeedAlert ??= new SpeedAlertSettings();
+        SpeedAlert.Normalize();
+        ProgramAlert ??= new ProgramAlertSettings();
+        ProgramAlert.Normalize();
         NetworkPlans = (NetworkPlans ?? [])
             .Where(p => p.Value is not null)
             .ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);

@@ -43,6 +43,10 @@ internal sealed class NetPulseContext : ApplicationContext
     private readonly ProcessTrafficService _processTraffic;
     private readonly SpeedHistory _speedHistory = new(TimeSpan.FromMinutes(10));
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private bool _importing; // a restored backup is on disk; the in-memory state must not overwrite it
+    private readonly ProgramLimitTracker _programLimits = new();
+    private SustainedSpeedDetector? _speedDetector;
+    private (SpeedAlertDirection, long, int)? _speedDetectorKey;
     private readonly Icon _logoTrayIcon;
     private Icon? _speedTrayIcon;
     private string? _trayIconKey;
@@ -265,6 +269,7 @@ internal sealed class NetPulseContext : ApplicationContext
         _speedHistory.Add(_clock.Elapsed, sample);
         _widget.ShowSpeed(sample);
         UpdateTrayIcon(sample);
+        CheckSpeedAlert(sample);
 
         // NotifyIcon.Text is limited to 127 characters and updating it is relatively costly.
         var down = ByteFormatter.FormatSpeed(sample.DownloadBytesPerSecond, _settings.Unit);
@@ -278,6 +283,84 @@ internal sealed class NetPulseContext : ApplicationContext
             _widget.SetToolTipText(
                 T($"今天：↓ {ByteFormatter.FormatSize(today.Downloaded)}  ↑ {ByteFormatter.FormatSize(today.Uploaded)}\n双击打开流量统计", $"Today: ↓ {ByteFormatter.FormatSize(today.Downloaded)}  ↑ {ByteFormatter.FormatSize(today.Uploaded)}\nDouble-click to open usage"));
         }
+    }
+
+    private void CheckSpeedAlert(SpeedSample sample)
+    {
+        var alert = _settings.SpeedAlert;
+        if (!alert.Enabled)
+        {
+            _speedDetector = null;
+            _speedDetectorKey = null;
+            return;
+        }
+
+        var key = (alert.Direction, alert.ThresholdBytesPerSecond, alert.Minutes);
+        if (_speedDetector is null || _speedDetectorKey != key)
+        {
+            _speedDetector = new SustainedSpeedDetector(alert.ThresholdBytesPerSecond, TimeSpan.FromMinutes(alert.Minutes));
+            _speedDetectorKey = key;
+        }
+
+        var upload = alert.Direction == SpeedAlertDirection.Upload;
+        if (_speedDetector.Feed(_clock.Elapsed, upload ? sample.UploadBytesPerSecond : sample.DownloadBytesPerSecond))
+        {
+            var limit = ByteFormatter.FormatSpeed(alert.ThresholdBytesPerSecond, _settings.Unit);
+            var now = ByteFormatter.FormatSpeed(upload ? sample.UploadBytesPerSecond : sample.DownloadBytesPerSecond, _settings.Unit);
+            _tray.ShowBalloonTip(
+                10_000,
+                upload ? T("上传速度持续偏高", "Upload speed stays high") : T("下载速度持续偏高", "Download speed stays high"),
+                T($"已连续 {alert.Minutes} 分钟超过 {limit}，当前 {now}。可在“进程流量”中查看是哪个程序。", $"Above {limit} for {alert.Minutes} minutes, now {now}. Check the Programs tab to see which program."),
+                ToolTipIcon.Warning);
+        }
+    }
+
+    private void CheckProgramAlert()
+    {
+        var alert = _settings.ProgramAlert;
+        if (!alert.Enabled || !_processTraffic.IsRunning)
+        {
+            return;
+        }
+
+        var over = _programLimits.NewlyOver(_processTraffic.History, DateOnly.FromDateTime(DateTime.Now), alert.LimitBytes);
+        if (over.Count == 0)
+        {
+            return;
+        }
+
+        var names = string.Join(", ", over.Take(3).Select(a => $"{a.Name} ({ByteFormatter.FormatSize(a.Total)})"))
+            + (over.Count > 3 ? T($" 等 {over.Count} 个程序", $" and {over.Count - 3} more") : string.Empty);
+        _tray.ShowBalloonTip(
+            10_000,
+            T("程序今日流量超出设定", "Program over its daily limit"),
+            T($"超过 {ByteFormatter.FormatSize(alert.LimitBytes)}：{names}", $"Over {ByteFormatter.FormatSize(alert.LimitBytes)}: {names}"),
+            ToolTipIcon.Warning);
+    }
+
+    private void CheckWeeklySummary()
+    {
+        if (!_settings.WeeklySummary)
+        {
+            return;
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        if (WeeklySummary.DueOn(_monitor.Ledger, today, _settings.WeeklySummaryShownFor) is not { } summary)
+        {
+            return;
+        }
+
+        _settings.WeeklySummaryShownFor = WeeklySummary.MondayOf(today);
+        SaveSettings();
+        var change = summary.PreviousWeek.Total > 0
+            ? T($"，比前一周{((double)summary.Week.Total / summary.PreviousWeek.Total) - 1:+0%;-0%;±0%}", $", {((double)summary.Week.Total / summary.PreviousWeek.Total) - 1:+0%;-0%;±0%} vs the week before")
+            : string.Empty;
+        _tray.ShowBalloonTip(
+            10_000,
+            T($"上周流量（{summary.From:M/d} – {summary.To:M/d}）", $"Last week ({summary.From:M/d} – {summary.To:M/d})"),
+            T($"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}，合计 {ByteFormatter.FormatSize(summary.Week.Total)}{change}", $"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}, {ByteFormatter.FormatSize(summary.Week.Total)} in total{change}"),
+            ToolTipIcon.Info);
     }
 
     /// <summary>Shows the speed in the tray icon, redrawing only when the picture would change.</summary>
@@ -328,11 +411,13 @@ internal sealed class NetPulseContext : ApplicationContext
         UpdateWidgetVisibility();
         _widget.BringToTopIfTopMost();
         _processTraffic.RecordHistory();
+        CheckProgramAlert();
 
         if (DateTime.UtcNow - _lastSave >= SaveInterval)
         {
             SaveUsage();
             CheckDataPlan();
+            CheckWeeklySummary();
         }
     }
 
@@ -397,7 +482,7 @@ internal sealed class NetPulseContext : ApplicationContext
     {
         if (_mainWindow is null || _mainWindow.IsDisposed)
         {
-            _settingsPage = new SettingsPage(_settings);
+            _settingsPage = new SettingsPage(_settings, ExportBackup, ImportBackup);
             _settingsPage.SettingsChanged += (_, _) => ApplySettings(save: true);
             _mainWindow = new MainWindow(
             [
@@ -435,6 +520,49 @@ internal sealed class NetPulseContext : ApplicationContext
         return true;
     }
 
+    private void ExportBackup(string path)
+    {
+        SaveUsage();
+        SaveSettings();
+        BackupDocument.Write(path, new BackupDocument
+        {
+            AppVersion = ElevatedAutostart.CurrentVersion,
+            Settings = _settings,
+            Usage = new UsageDocument { Days = [.. _monitor.Ledger.ToList()] },
+            NetworkUsage = _monitor.Networks.ToDocument(),
+            ProcessUsage = _processTraffic.History.ToDocument(),
+        });
+    }
+
+    /// <summary>Replaces the files on disk with the backup's and restarts; nothing is kept in memory, so nothing overwrites them on exit.</summary>
+    private void ImportBackup(string path)
+    {
+        var backup = BackupDocument.Read(path);
+        SettingsStore.Save(backup.Settings);
+        _usageStore.Save(backup.Usage);
+        _networkUsageStore.Save(backup.NetworkUsage);
+        _processUsageStore.Save(backup.ProcessUsage);
+
+        _importing = true;
+        try
+        {
+            // A plain child keeps this process's rights, so an elevated NetPulse restarts elevated without a prompt.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = Environment.ProcessPath ?? Application.ExecutablePath,
+                Arguments = $"{Program.RestartedArgument} {Program.OpenArgumentPrefix}{MainTab.Settings}{AppPaths.ProfileArgument}",
+            })?.Dispose();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            _importing = false;
+            ErrorLog.Write(ex, "ImportBackup restart");
+            throw new IOException(T("已恢复数据，但无法自动重启，请手动重启 NetPulse。", "The data was restored, but NetPulse could not restart by itself. Please start it again."), ex);
+        }
+
+        Exit();
+    }
+
     private void SaveWidgetPosition()
     {
         _settings.WidgetX = _widget.Left;
@@ -445,6 +573,11 @@ internal sealed class NetPulseContext : ApplicationContext
 
     private void SaveSettings()
     {
+        if (_importing)
+        {
+            return;
+        }
+
         try
         {
             SettingsStore.Save(_settings);
@@ -458,6 +591,11 @@ internal sealed class NetPulseContext : ApplicationContext
     /// <summary>Saves the daily totals and the per-program history, whichever changed.</summary>
     private void SaveUsage()
     {
+        if (_importing)
+        {
+            return;
+        }
+
         _lastSave = DateTime.UtcNow;
         var keepFrom = DateOnly.FromDateTime(DateTime.Now).AddDays(-_settings.UsageRetentionDays);
         var ledger = _monitor.Ledger;
