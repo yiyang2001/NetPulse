@@ -113,6 +113,9 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
     private readonly Button _toggle = new() { AutoSize = true };
     private readonly Button _reset = new() { Text = T("清零", "Reset"), AutoSize = true };
     private readonly Button _export = new() { Text = T("导出 CSV…", "Export CSV…"), AutoSize = true };
+    private readonly Button _blocked = new() { Text = T("禁止联网的程序…", "Blocked programs…"), AutoSize = true };
+    private readonly ContextMenuStrip _rowMenu = new();
+    private readonly ToolStripMenuItem _blockItem = new(T("禁止此程序联网…", "Block this program from the network…"));
     private readonly ComboBox _range = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
     private readonly CheckBox _groupByName = new() { Text = T("按程序合并", "Group by program"), Checked = true, AutoSize = true };
     private readonly CheckBox _hideIdle = new() { Text = T("隐藏无流量的程序", "Hide idle programs"), Checked = true, AutoSize = true };
@@ -161,12 +164,30 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
             RefreshView();
         };
         _export.Click += (_, _) => ExportCsv();
+        _blocked.Click += (_, _) => BlockedProgramsDialog.Show(this, _restartElevated);
+        _rowMenu.Items.Add(_blockItem);
+        _rowMenu.Opening += (_, e) =>
+        {
+            // Only live rows know their processes, and only an elevated NetPulse may add firewall rules.
+            var path = SelectedProgramPath();
+            _blockItem.Enabled = path is not null && Elevation.IsAdministrator;
+            _blockItem.ToolTipText = path ?? T("无法确定这个程序的路径。", "The path of this program is unknown.");
+            e.Cancel = SelectedRange != Range.Live || _list.SelectedItems.Count == 0;
+        };
+        _blockItem.Click += (_, _) =>
+        {
+            if (SelectedProgramPath() is { } path)
+            {
+                BlockedProgramsDialog.TryBlock(this, path);
+            }
+        };
+        _list.ContextMenuStrip = _rowMenu;
         _groupByName.CheckedChanged += (_, _) => RefreshView();
         _hideIdle.CheckedChanged += (_, _) => RefreshView();
         _timer.Tick += (_, _) => RefreshView(sample: true);
 
         Controls.Add(_list);
-        Controls.Add(Ui.Toolbar(new Label { Text = T("范围", "Range") }, _range, _toggle, _reset, _groupByName, _hideIdle, _export));
+        Controls.Add(Ui.Toolbar(new Label { Text = T("范围", "Range") }, _range, _toggle, _reset, _groupByName, _hideIdle, _export, _blocked));
         Controls.Add(Ui.Toolbar(_status, _elevate));
         Controls.Add(Ui.Note(
             T("数据来自 Windows 内核网络事件（ETW），统计各程序的 TCP/UDP 收发字节数。", "Data comes from Windows kernel network events (ETW): bytes sent and received over TCP/UDP by each program. ") +
@@ -189,6 +210,7 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         if (disposing)
         {
             _timer.Dispose();
+            _rowMenu.Dispose();
         }
 
         base.Dispose(disposing);
@@ -239,9 +261,9 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
         var rows = _groupByName.Checked
             ? rates.GroupBy(r => ProcessName(r.ProcessId))
                 .Select(g => (Name: g.Key, Id: T($"{g.Count()} 个", $"{g.Count()}"), Down: g.Sum(r => r.DownloadBytesPerSecond), Up: g.Sum(r => r.UploadBytesPerSecond),
-                    TotalDown: g.Sum(r => r.TotalDownloaded), TotalUp: g.Sum(r => r.TotalUploaded)))
+                    TotalDown: g.Sum(r => r.TotalDownloaded), TotalUp: g.Sum(r => r.TotalUploaded), Pids: g.Select(r => r.ProcessId).ToArray()))
             : rates.Select(r => (Name: ProcessName(r.ProcessId), Id: r.ProcessId.ToString(), Down: r.DownloadBytesPerSecond, Up: r.UploadBytesPerSecond,
-                TotalDown: r.TotalDownloaded, TotalUp: r.TotalUploaded));
+                TotalDown: r.TotalDownloaded, TotalUp: r.TotalUploaded, Pids: new[] { r.ProcessId }));
 
         var ordered = rows
             .Where(r => !_hideIdle.Checked || r.Down + r.Up > 0)
@@ -249,11 +271,14 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
             .ThenByDescending(r => r.TotalDown + r.TotalUp)
             .ToList();
 
+        // Keep the selection across the once-a-second rebuild, so the row menu acts on what the user picked.
+        var selected = _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].Text : null;
+        var selectedId = _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].SubItems[1].Text : null;
         _list.BeginUpdate();
         _list.Items.Clear();
         foreach (var row in ordered)
         {
-            _list.Items.Add(new ListViewItem(
+            var item = new ListViewItem(
             [
                 row.Name,
                 row.Id,
@@ -261,7 +286,10 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
                 ByteFormatter.FormatSpeed(row.Up, SpeedUnit.Bytes),
                 ByteFormatter.FormatSize(row.TotalDown),
                 ByteFormatter.FormatSize(row.TotalUp),
-            ]));
+            ])
+            { Tag = row.Pids };
+            _list.Items.Add(item);
+            item.Selected = row.Name == selected && (_groupByName.Checked || row.Id == selectedId);
         }
 
         _list.EndUpdate();
@@ -361,6 +389,12 @@ internal sealed class ProcessTrafficPage : UserControl, IActivatablePage
             MessageBox.Show(this, T("导出失败：", "Export failed: ") + ex.Message, AppPaths.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
+
+    /// <summary>Exe of the selected live row (the first of its processes that still runs), or null.</summary>
+    private string? SelectedProgramPath() =>
+        _list.SelectedItems.Count > 0 && _list.SelectedItems[0].Tag is int[] pids
+            ? pids.Where(pid => pid > 4).Select(NativeMethods.ProcessImagePath).FirstOrDefault(path => path is not null)
+            : null;
 
     private string ProcessName(int pid)
     {

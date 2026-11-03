@@ -1,0 +1,43 @@
+# Pushing a tag such as v0.8.0 builds the release files and creates a DRAFT GitHub release with them.
+# Check the draft and press "Publish release": only published releases count for the update check.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Check that the tag matches the version
+        shell: pwsh
+        run: |
+          [xml] $props = Get-Content Directory.Build.props
+          $version = ($props.Project.PropertyGroup | ForEach-Object { $_.Version } | Where-Object { $_ } | Select-Object -First 1)
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            throw "Tag $env:GITHUB_REF_NAME does not match <Version>$version</Version> in Directory.Build.props."
+          }
+          "VERSION=$version" | Out-File $env:GITHUB_ENV -Append
+
+      # The update check of these builds reads the releases of this repository.
+      - name: Build release files
+        shell: pwsh
+        run: ./build/publish.ps1 -Runtime win-x64, win-arm64 -UpdateRepository $env:GITHUB_REPOSITORY
+
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = Get-ChildItem "artifacts/$env:VERSION" -File | ForEach-Object FullName
+          gh release create $env:GITHUB_REF_NAME @files --draft --title "NetPulse $env:VERSION" --generate-notes

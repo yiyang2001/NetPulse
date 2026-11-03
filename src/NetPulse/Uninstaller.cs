@@ -24,6 +24,7 @@ internal static class Uninstaller
                 Caption = AppPaths.AppName,
                 Heading = T("卸载 NetPulse？", "Uninstall NetPulse?"),
                 Text = T($"将删除 {UserInstall.InstallDirectory}、开始菜单快捷方式和开机启动项。", $"Removes {UserInstall.InstallDirectory}, the Start menu shortcut and the startup entry.") +
+                    (BlockedProgramCount() is > 0 and var blocked ? T($"\n{blocked} 个程序仍被 NetPulse 的防火墙规则禁止联网，卸载后这些规则会保留。如需恢复，请先取消卸载，在“进程流量 → 禁止联网的程序”中允许联网。", $"\n{blocked} program(s) are still blocked by NetPulse's firewall rules, which stay after uninstalling. To allow them again, cancel and use Programs > Blocked programs first.") : string.Empty) +
                     (ElevatedAutostart.IsEnabled() ? T("\n“以管理员身份启动”的计划任务和 Program Files 中的副本也会删除，需要确认一次 Windows 的权限提示。", "\nThe “start as administrator” task and its copy in Program Files are removed too; Windows asks for permission once.") : string.Empty) +
                     T($"\n\n数据文件夹：{AppPaths.DataDirectory}", $"\n\nData folder: {AppPaths.DataDirectory}"),
                 Icon = TaskDialogIcon.Warning,
@@ -93,6 +94,18 @@ internal static class Uninstaller
         }
 
         return problems.Count == 0 ? 0 : 2;
+    }
+
+    private static int BlockedProgramCount()
+    {
+        try
+        {
+            return FirewallBlocker.List().Count;
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or UnauthorizedAccessException or InvalidCastException or System.Reflection.TargetInvocationException)
+        {
+            return 0;
+        }
     }
 
     /// <summary>Shown when NetPulse is running and does not hand over within a few seconds.</summary>

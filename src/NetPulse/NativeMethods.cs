@@ -31,6 +31,46 @@ internal static partial class NativeMethods
     private const int QUNS_RUNNING_D3D_FULL_SCREEN = 3;
     private const int QUNS_PRESENTATION_MODE = 4;
 
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    /// <summary>Full path of a running process's exe, or null (exited, or not even limited query rights).</summary>
+    public static string? ProcessImagePath(int processId)
+    {
+        var process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)processId);
+        if (process == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var buffer = new char[32_768];
+            var size = buffer.Length;
+            unsafe
+            {
+                fixed (char* name = buffer)
+                {
+                    return QueryFullProcessImageName(process, 0, name, ref size) ? new string(buffer, 0, size) : null;
+                }
+            }
+        }
+        finally
+        {
+            CloseHandle(process);
+        }
+    }
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial nint OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static unsafe partial bool QueryFullProcessImageName(nint process, uint flags, char* name, ref int size);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CloseHandle(nint handle);
+
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool ReleaseCapture();

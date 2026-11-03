@@ -19,7 +19,7 @@
 - 每个版本都附带 `SHA256SUMS.txt`，可以用 `Get-FileHash` 核对下载的文件。
 - **SmartScreen**：exe 没有代码签名，第一次运行时 Windows 可能提示“Windows 已保护你的电脑”。核对校验值后，可以点击“更多信息 → 仍要运行”。
 
-## 功能（v0.6）
+## 功能（v0.8）
 
 ### 网速与流量
 
@@ -72,6 +72,12 @@
 - 可以按程序合并，也可以逐个进程显示。
 - 数据来源是 Windows 内核网络事件（ETW 提供程序 `Microsoft-Windows-Kernel-Network`），统计 TCP 和 UDP 的收发字节数。
 - 这项功能**需要以管理员身份运行**。未提权时，页面上有“以管理员身份重启”按钮。重启后会弹出 Windows 的权限确认，旧的实例退出，新的实例接管。
+- **禁止联网**（v0.8 新增）：在实时列表中右键某个程序，选择“禁止此程序联网…”；或者点击“禁止联网的程序…”，从文件中选择程序，也可以在这里重新允许联网。
+  - 通过 Windows 防火墙实现：每个程序一条出站、一条入站阻止规则，都放在防火墙的“NetPulse”规则组中。NetPulse 只读取和删除这个组里的规则，不会改动其他软件的规则。
+  - 添加或删除规则需要以管理员身份运行；查看列表不需要。
+  - 不能阻止 Windows 的核心进程（如 svchost、lsass、explorer）和 NetPulse 自己。阻止 Windows 目录下的其他程序前会额外提醒。
+  - 已经建立的连接可能要等程序重新连接时才会断开。如果当前网络的 Windows 防火墙被关闭，规则不会生效，对话框会提示。
+  - 卸载 NetPulse 不会删除这些规则（卸载时会提示还有几条），需要先在这里允许联网，或者在“高级安全 Windows Defender 防火墙”中删除“NetPulse”组的规则。
 
 ### Wi-Fi（v0.2 新增）
 
@@ -157,6 +163,18 @@ dotnet run --project src/NetPulse
 - **更新检查的来源**是 GitHub 仓库名（`owner/repo`），可以用 `-UpdateRepository` 指定，也可以写在 `Directory.Build.props` 的 `NetPulseUpdateRepository` 中。发布新版本时，GitHub Release 的标签要写成 `v0.7.0` 这种格式，草稿和预发布版本不会被当作新版本。
 - **代码签名**：目前没有购买证书。如果以后购买了（或使用 Azure 的云签名服务），只需传入 `-CertificateThumbprint`，其他步骤不变。签名能减少 SmartScreen 警告，但新证书也需要积累一段时间的信誉。
 
+### GitHub Actions（v0.8 新增）
+
+代码推送到 GitHub 后：
+
+- **CI**（`.github/workflows/ci.yml`）：每次推送到 `main` 和每个 Pull Request 都会在 Windows 上构建并运行全部测试。
+- **发布**（`.github/workflows/release.yml`）：推送 `v0.8.0` 这样的标签时，先检查标签和 `Directory.Build.props` 中的版本号一致，再构建 x64 和 ARM64 的四个 exe 及校验文件，并创建一个**草稿** Release。构建出的程序会自动以当前仓库作为更新来源。检查草稿后点击“Publish release”才算正式发布，开启了更新检查的用户这时才会收到提醒。
+
+```powershell
+git tag v0.8.0
+git push origin v0.8.0
+```
+
 开发测试时，可以设置环境变量 `NETPULSE_PROFILE=dev`，或者加参数 `--profile=dev`。测试版会使用独立的数据文件夹（`%LOCALAPPDATA%\NetPulse-dev`）、独立的单实例锁和独立的开机启动项，可以和日常使用的版本同时运行。
 
 ## 项目结构
@@ -164,9 +182,10 @@ dotnet run --project src/NetPulse
 | 路径 | 内容 |
 |---|---|
 | `src/NetPulse.Core` | 与界面无关的逻辑：速度采样、流量账本、计费周期、套餐提醒、进程速率、测速引擎与统计、Ping 统计、Wi-Fi 配置解析与二维码内容、设置存储（原子写入，文件损坏时自动回退） |
-| `src/NetPulse/Platform` | Windows 接口：ETW 内核网络跟踪、Native Wifi、管理员提权重启、以管理员身份开机启动（计划任务） |
+| `src/NetPulse/Platform` | Windows 接口：ETW 内核网络跟踪、Native Wifi、ARP 表、Windows 防火墙规则、按用户安装、管理员提权重启、以管理员身份开机启动（计划任务） |
 | `src/NetPulse` | WinForms 界面：悬浮窗、托盘、主窗口（流量统计、实时速度、进程流量、Wi-Fi、测速、网络工具、设置） |
 | `build/publish.ps1` | 发布脚本：两种 exe、可选签名、SHA-256 校验值 |
+| `.github/workflows` | GitHub Actions：CI 和按标签发布 |
 | `tests/NetPulse.Core.Tests` | xUnit 单元测试，包括一个用本地假服务器离线跑通完整测速流程的测试 |
 
 第三方依赖只有 [QRCoder](https://github.com/codebude/QRCoder)（MIT 许可），只用它生成二维码矩阵，绘制由本项目完成。
