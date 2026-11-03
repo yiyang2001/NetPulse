@@ -12,6 +12,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <AssemblyMetadata Include="UpdateRepository" Value="$(NetPulseUpdateRepository)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="Assets\NetPulse.ico" LogicalName="NetPulse.ico" />
   </ItemGroup>
 

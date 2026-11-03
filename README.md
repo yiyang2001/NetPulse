@@ -2,6 +2,23 @@
 
 轻量的 Windows 网速悬浮窗、流量统计和网络工具箱。所有功能免费，不收集数据，没有广告。
 
+## 下载与安装（v0.7）
+
+每个版本有两个 exe，任选一个：
+
+| 文件 | 大小 | 说明 |
+|---|---|---|
+| `NetPulse-<版本>-win-x64.exe` | 约 1 MB | 需要先安装 [.NET 10 桌面运行时](https://dotnet.microsoft.com/download/dotnet/10.0)（缺少时 Windows 会提示下载） |
+| `NetPulse-<版本>-win-x64-full.exe` | 约 50 MB | 自带运行时，不需要另外安装任何东西 |
+
+- **免安装**：直接双击运行。数据保存在 `%LOCALAPPDATA%\NetPulse\`，与 exe 放在哪里无关。
+- **安装**（可选）：在“设置 → 安装与更新”中点击“安装到这台电脑”。NetPulse 会被复制到 `%LOCALAPPDATA%\Programs\NetPulse`，添加开始菜单快捷方式，并在 Windows 设置的“已安装的应用”中登记。不需要管理员权限，设置和统计保持不变。
+  - 以后运行新版本的 exe，同一个位置会显示“更新已安装的版本”。
+  - 卸载：在“已安装的应用”中卸载，或在设置页点击“卸载…”。卸载时可以选择是否同时删除设置和统计（默认保留）。如果开启了“以管理员身份启动”，它的计划任务和 Program Files 中的副本也会一并删除。
+- 没有 MSIX 安装包：MSIX 必须用受信任的证书签名才能安装。
+- 每个版本都附带 `SHA256SUMS.txt`，可以用 `Get-FileHash` 核对下载的文件。
+- **SmartScreen**：exe 没有代码签名，第一次运行时 Windows 可能提示“Windows 已保护你的电脑”。核对校验值后，可以点击“更多信息 → 仍要运行”。
+
 ## 功能（v0.6）
 
 ### 网速与流量
@@ -90,6 +107,13 @@
   - 名称通过反向 DNS 查询，只有路由器支持时才会有；没有内置设备厂商库。
   - 全程只在本地网络内进行，不访问互联网，需要手动点击“扫描”。
 
+### 更新检查（v0.7 新增，默认关闭）
+
+- 在“设置 → 安装与更新”中开启后，每天最多连接一次 `api.github.com`，读取发布页上的最新版本号。请求只带 NetPulse 自己的版本号（User-Agent），没有 Cookie 或其他标识。
+- 有新版本时显示一条通知，点击通知打开 GitHub 上的下载页面。**不会自动下载或安装**，每个新版本只提醒一次。
+- 也可以点击“立即检查”手动检查。
+- 更新来源在构建时写入（见下文“发布”）。没有设置更新来源的版本不能检查更新，设置页上会说明。
+
 ## 隐私
 
 - **平时不联网**：后台运行和统计流量时不发起任何网络连接，实测连接数为 0。
@@ -100,6 +124,7 @@
   - 端口检测 → 你输入的主机和端口
   - 局域网设备 → 只在本地网络内（ARP 和 Ping 本网段）
   - 自动测速（默认关闭，开启后才会）→ `speed.cloudflare.com`
+  - 更新检查（默认关闭，开启后每天最多一次）→ `api.github.com`
 - 不收集、不上传任何个人信息。
 - 所有数据只保存在 `%LOCALAPPDATA%\NetPulse\`：
   - `settings.json`：设置
@@ -117,12 +142,20 @@
 dotnet build NetPulse.slnx
 dotnet test NetPulse.slnx
 dotnet run --project src/NetPulse
-
-# 发布为单文件 exe（运行时需要 .NET 10 Desktop Runtime）
-dotnet publish src/NetPulse/NetPulse.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -o publish
 ```
 
-如果要发布成不依赖 .NET 运行时的版本，把 `--self-contained false` 改为 `true`，代价是体积会大得多（上百 MB）。
+### 发布
+
+```powershell
+.\build\publish.ps1                                            # win-x64，两个 exe 加 SHA256SUMS.txt
+.\build\publish.ps1 -Runtime win-x64, win-arm64                # 同时构建 ARM64 版本
+.\build\publish.ps1 -UpdateRepository owner/netpulse           # 启用更新检查，读取这个 GitHub 仓库的 Releases
+.\build\publish.ps1 -CertificateThumbprint <证书指纹>           # 用 signtool 签名（需要 Windows SDK）
+```
+
+- 脚本会先运行测试，然后把文件输出到 `artifacts\<版本>\`。版本号取自 `Directory.Build.props`。
+- **更新检查的来源**是 GitHub 仓库名（`owner/repo`），可以用 `-UpdateRepository` 指定，也可以写在 `Directory.Build.props` 的 `NetPulseUpdateRepository` 中。发布新版本时，GitHub Release 的标签要写成 `v0.7.0` 这种格式，草稿和预发布版本不会被当作新版本。
+- **代码签名**：目前没有购买证书。如果以后购买了（或使用 Azure 的云签名服务），只需传入 `-CertificateThumbprint`，其他步骤不变。签名能减少 SmartScreen 警告，但新证书也需要积累一段时间的信誉。
 
 开发测试时，可以设置环境变量 `NETPULSE_PROFILE=dev`，或者加参数 `--profile=dev`。测试版会使用独立的数据文件夹（`%LOCALAPPDATA%\NetPulse-dev`）、独立的单实例锁和独立的开机启动项，可以和日常使用的版本同时运行。
 
@@ -133,6 +166,7 @@ dotnet publish src/NetPulse/NetPulse.csproj -c Release -r win-x64 --self-contain
 | `src/NetPulse.Core` | 与界面无关的逻辑：速度采样、流量账本、计费周期、套餐提醒、进程速率、测速引擎与统计、Ping 统计、Wi-Fi 配置解析与二维码内容、设置存储（原子写入，文件损坏时自动回退） |
 | `src/NetPulse/Platform` | Windows 接口：ETW 内核网络跟踪、Native Wifi、管理员提权重启、以管理员身份开机启动（计划任务） |
 | `src/NetPulse` | WinForms 界面：悬浮窗、托盘、主窗口（流量统计、实时速度、进程流量、Wi-Fi、测速、网络工具、设置） |
+| `build/publish.ps1` | 发布脚本：两种 exe、可选签名、SHA-256 校验值 |
 | `tests/NetPulse.Core.Tests` | xUnit 单元测试，包括一个用本地假服务器离线跑通完整测速流程的测试 |
 
 第三方依赖只有 [QRCoder](https://github.com/codebude/QRCoder)（MIT 许可），只用它生成二维码矩阵，绘制由本项目完成。

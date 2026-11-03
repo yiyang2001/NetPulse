@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using NetPulse.Core;
 using NetPulse.Platform;
 using static NetPulse.Core.Lang;
@@ -43,15 +44,28 @@ internal sealed class SettingsPage : UserControl
     private readonly CheckBox _programAlert = Check(T("某个程序当天流量超出设定值时提醒（需要以管理员身份运行）", "Alert when a program exceeds a daily amount (needs administrator rights)"));
     private readonly NumericUpDown _programAlertLimit = Number(1, 100_000_000, 100, 0);
     private readonly CheckBox _weeklySummary = Check(T("每周一用通知显示上周流量", "Show last week's traffic in a notification on Mondays"));
+    private readonly Label _installStatus = Note();
+    private readonly Button _install = new() { AutoSize = true };
+    private readonly Button _uninstall = new() { Text = T("卸载…", "Uninstall…"), AutoSize = true };
+    private readonly CheckBox _updateCheck = Check(T("每天检查一次是否有新版本", "Check for a new version once a day"));
+    private readonly Label _updateNote = Note();
+    private readonly Button _checkNow = new() { Text = T("立即检查", "Check now"), AutoSize = true };
+    private readonly LinkLabel _updateResult = new() { AutoSize = true, MaximumSize = new Size(560, 0), Padding = new Padding(0, 6, 0, 4) };
     private readonly Action<string> _exportBackup;
     private readonly Action<string> _importBackup;
+    private readonly UpdateService _updates;
+    private readonly Action _installApp;
+    private readonly Action _uninstallApp;
     private bool _loading;
 
-    public SettingsPage(AppSettings settings, Action<string> exportBackup, Action<string> importBackup)
+    public SettingsPage(AppSettings settings, Action<string> exportBackup, Action<string> importBackup, UpdateService updates, Action install, Action uninstall)
     {
         _settings = settings;
         _exportBackup = exportBackup;
         _importBackup = importBackup;
+        _updates = updates;
+        _installApp = install;
+        _uninstallApp = uninstall;
         AutoScroll = true;
         Padding = new Padding(12);
 
@@ -107,13 +121,33 @@ internal sealed class SettingsPage : UserControl
                 AutoSize = true,
                 MaximumSize = new Size(560, 0),
                 Text = T("NetPulse 不收集、不上传任何数据，也没有广告或付费功能。只有在你主动使用测速、查询公网 IP、", "NetPulse collects and uploads nothing, and has no ads or paid features. It only goes online when you run a speed test, look up your public IP, ") +
-                    T("Ping / 路由追踪 / DNS 查询时才会联网，且只连接对应的目标。\n所有设置和统计只保存在本机：", "or use Ping / Traceroute / DNS lookup, and then only contacts that target.\nAll settings and statistics stay on this PC: ") + AppPaths.DataDirectory,
+                    T("Ping / 路由追踪 / DNS 查询、端口检测时，或者开启了自动测速、更新检查时才会联网，且只连接对应的目标。\n所有设置和统计只保存在本机：", "or use Ping / Traceroute / DNS lookup / Port check, or when you turned on automatic speed tests or the update check, and then only contacts that target.\nAll settings and statistics stay on this PC: ") + AppPaths.DataDirectory,
                 Padding = new Padding(0, 6, 0, 6),
             },
             openFolder,
             exportButton,
             importButton));
+        var installButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        installButtons.Controls.AddRange([_install, _uninstall]);
+        layout.Controls.Add(Group(
+            T("安装与更新", "Install and updates"),
+            _installStatus,
+            installButtons,
+            _updateCheck,
+            _updateNote,
+            _checkNow,
+            _updateResult));
         Controls.Add(layout);
+        _install.Click += (_, _) => Install();
+        _uninstall.Click += (_, _) => Uninstall();
+        _checkNow.Click += async (_, _) => await CheckNowAsync();
+        _updateResult.LinkClicked += (_, _) =>
+        {
+            if (_updateResult.Tag is Uri page)
+            {
+                Ui.OpenUri(page.AbsoluteUri);
+            }
+        };
 
         foreach (var combo in new[] { _unit, _adapter, _theme, _windowTheme, _language, _layout, _trayIcon, _speedAlertDirection })
         {
@@ -125,7 +159,7 @@ internal sealed class SettingsPage : UserControl
             number.ValueChanged += OnChanged;
         }
 
-        foreach (var check in new[] { _speedAlert, _programAlert, _weeklySummary, _miniGraph, _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
+        foreach (var check in new[] { _updateCheck, _speedAlert,_programAlert, _weeklySummary, _miniGraph, _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
         {
             check.CheckedChanged += OnChanged;
         }
@@ -183,6 +217,8 @@ internal sealed class SettingsPage : UserControl
             _programAlert.Checked = _settings.ProgramAlert.Enabled;
             _programAlertLimit.Value = (decimal)_settings.ProgramAlert.LimitMb;
             _weeklySummary.Checked = _settings.WeeklySummary;
+            _updateCheck.Checked = _settings.UpdateCheck.Enabled && UpdateService.IsConfigured;
+            LoadInstall();
             UpdatePlanEnabledState();
         }
         finally
@@ -228,6 +264,16 @@ internal sealed class SettingsPage : UserControl
         _settings.ProgramAlert.Enabled = _programAlert.Checked;
         _settings.ProgramAlert.LimitMb = (double)_programAlertLimit.Value;
         _settings.WeeklySummary = _weeklySummary.Checked;
+        if (UpdateService.IsConfigured)
+        {
+            if (_updateCheck.Checked && !_settings.UpdateCheck.Enabled)
+            {
+                _settings.UpdateCheck.LastCheck = null; // first check right away, so the user sees it work
+            }
+
+            _settings.UpdateCheck.Enabled = _updateCheck.Checked;
+        }
+
         _settings.Normalize();
         UpdatePlanEnabledState();
         SettingsChanged?.Invoke(this, EventArgs.Empty);
@@ -285,6 +331,128 @@ internal sealed class SettingsPage : UserControl
             _ => T("选择“以管理员身份启动”时，NetPulse 会被复制到 Program Files，以免这个以管理员身份运行的程序被其他程序替换。", "“Start as administrator” copies NetPulse to Program Files, so that nothing else can replace a program that runs with administrator rights."),
         };
     }
+
+    private void LoadInstall()
+    {
+        var exe = Environment.ProcessPath ?? Application.ExecutablePath;
+        var installed = UserInstall.InstalledVersion();
+        var current = ElevatedAutostart.CurrentVersion;
+        var offer = UserInstall.Offer();
+        _install.Visible = offer is InstallOffer.Install or InstallOffer.Update;
+        _install.Text = offer == InstallOffer.Update
+            ? T($"更新已安装的版本（{installed} → {current}）", $"Update the installed version ({installed} → {current})")
+            : T("安装到这台电脑", "Install on this PC");
+        _uninstall.Visible = UserInstall.IsInstalled;
+        _installStatus.Text = offer switch
+        {
+            _ when UserInstall.IsRunningInstalledCopy =>
+                T($"已安装在 {UserInstall.InstallDirectory}（版本 {current}）。也可以在 Windows 设置的“已安装的应用”中卸载。", $"Installed in {UserInstall.InstallDirectory} (version {current}). You can also uninstall it from “Installed apps” in Windows Settings."),
+            InstallOffer.Install =>
+                T($"现在以免安装方式运行：{exe}\n安装会复制到 {UserInstall.InstallDirectory}，添加开始菜单快捷方式，并在“已安装的应用”中登记，可以随时卸载。不需要管理员权限，设置和统计保持不变。", $"Running as a portable copy: {exe}\nInstalling copies it to {UserInstall.InstallDirectory}, adds a Start menu shortcut and an entry in “Installed apps” for uninstalling. No administrator rights needed; settings and statistics stay as they are."),
+            InstallOffer.Update =>
+                T($"这台电脑上已安装版本 {installed}，当前运行的是 {current}（{exe}）。", $"Version {installed} is installed on this PC; this is {current} ({exe})."),
+            InstallOffer.Reinstall =>
+                T($"这台电脑上已安装同一版本：{UserInstall.InstallDirectory}", $"The same version is installed on this PC: {UserInstall.InstallDirectory}"),
+            _ =>
+                T($"已安装的版本 {installed} 比当前运行的 {current} 更新。", $"The installed version {installed} is newer than this one ({current})."),
+        };
+
+        _updateCheck.Enabled = UpdateService.IsConfigured;
+        _checkNow.Visible = UpdateService.IsConfigured;
+        _updateNote.Text = UpdateService.IsConfigured
+            ? T($"默认关闭。开启后每天连接一次 api.github.com，读取 {UpdateService.Repository} 的最新版本号，只发送 NetPulse 的版本号。有新版本时用通知提醒，不会自动下载或安装。", $"Off by default. When on, NetPulse contacts api.github.com once a day to read the latest version of {UpdateService.Repository}, sending only its own version number. A notification tells you about a new version; nothing is downloaded or installed by itself.")
+            : T("这个版本没有设置更新来源（构建时没有指定 NetPulseUpdateRepository），所以不能检查更新。", "This build has no update source (NetPulseUpdateRepository was not set when it was built), so it cannot check for updates.");
+    }
+
+    private void Install()
+    {
+        var answer = MessageBox.Show(
+            this,
+            T($"把 NetPulse {ElevatedAutostart.CurrentVersion} 安装到 {UserInstall.InstallDirectory}，然后从那里重新启动？", $"Install NetPulse {ElevatedAutostart.CurrentVersion} to {UserInstall.InstallDirectory} and restart from there?"),
+            AppPaths.AppName, MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
+        if (answer != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            UseWaitCursor = true;
+            _installApp();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.ComponentModel.Win32Exception or COMException)
+        {
+            ErrorLog.Write(ex, "Install");
+            MessageBox.Show(this, T("安装失败：", "Install failed: ") + ex.Message, AppPaths.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            LoadInstall();
+        }
+        finally
+        {
+            UseWaitCursor = false;
+        }
+    }
+
+    private void Uninstall()
+    {
+        try
+        {
+            _uninstallApp(); // the uninstaller asks for confirmation itself
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            ErrorLog.Write(ex, "Uninstall");
+            MessageBox.Show(this, T("无法启动卸载：", "Could not start the uninstaller: ") + ex.Message, AppPaths.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private async Task CheckNowAsync()
+    {
+        if (_updates.IsBusy)
+        {
+            return;
+        }
+
+        _checkNow.Enabled = false;
+        _updateResult.Tag = null;
+        _updateResult.LinkArea = new LinkArea(0, 0);
+        _updateResult.Text = T("正在检查…", "Checking…");
+        try
+        {
+            var release = await _updates.GetLatestAsync(CancellationToken.None);
+            if (IsDisposed)
+            {
+                return;
+            }
+
+            if (release is not null && UpdateFeed.IsNewer(release, UpdateService.CurrentVersion))
+            {
+                var link = T("打开下载页面", "Open the download page");
+                _updateResult.Text = T($"有新版本 {release.Version}（当前 {UpdateService.CurrentVersion}）。", $"Version {release.Version} is available (you have {UpdateService.CurrentVersion}). ") + link;
+                _updateResult.LinkArea = new LinkArea(_updateResult.Text.Length - link.Length, link.Length);
+                _updateResult.Tag = release.Page;
+            }
+            else
+            {
+                _updateResult.Text = T($"已是最新版本（{UpdateService.CurrentVersion}），{DateTime.Now:HH:mm}", $"Up to date ({UpdateService.CurrentVersion}), {DateTime.Now:HH:mm}");
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            if (!IsDisposed)
+            {
+                _updateResult.Text = T("检查失败：", "Check failed: ") + (ex is TaskCanceledException ? T("连接超时。", "timed out.") : ex.Message);
+            }
+        }
+        finally
+        {
+            if (!IsDisposed)
+            {
+                _checkNow.Enabled = UpdateService.IsConfigured;
+            }
+        }
+    }
+
+    private static Label Note() => new() { AutoSize = true, MaximumSize = new Size(560, 0), ForeColor = SystemColors.GrayText, Padding = new Padding(0, 2, 0, 4) };
 
     private void LoadAdapters()
     {

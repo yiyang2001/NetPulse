@@ -81,6 +81,13 @@ internal static class Ui
 
         static void Style(Control control)
         {
+            if (control is LinkLabel link)
+            {
+                // The default dark blue is unreadable on a dark background.
+                link.LinkColor = link.VisitedLinkColor = Color.FromArgb(96, 165, 250);
+                link.ActiveLinkColor = Color.FromArgb(147, 197, 253);
+            }
+
             if (control is ComboBox or NumericUpDown)
             {
                 // WinForms applies its own theme while creating the handle; ours has to come after it.

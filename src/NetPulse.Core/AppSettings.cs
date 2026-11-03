@@ -89,6 +89,9 @@ public sealed class AppSettings
 
     public SpeedTestSchedule SpeedTestSchedule { get; set; } = new();
 
+    /// <summary>Daily check for a newer release; off unless the user turns it on.</summary>
+    public UpdateCheckSettings UpdateCheck { get; set; } = new();
+
     /// <summary>Notification on Monday with last week's traffic.</summary>
     public bool WeeklySummary { get; set; } = true;
 
@@ -148,6 +151,8 @@ public sealed class AppSettings
         ProgramAlert.Normalize();
         SpeedTestSchedule ??= new SpeedTestSchedule();
         SpeedTestSchedule.Normalize();
+        UpdateCheck ??= new UpdateCheckSettings();
+        UpdateCheck.Normalize();
         NetworkPlans = (NetworkPlans ?? [])
             .Where(p => p.Value is not null)
             .ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);

@@ -25,6 +25,11 @@ internal static class Program
             return ElevatedAutostart.RunHelper(helper);
         }
 
+        if (args.Contains(InstallLayout.UninstallArgument))
+        {
+            return RunUninstaller(args);
+        }
+
         using var instance = AcquireSingleInstance(args.Contains(RestartedArgument));
         if (instance is null)
         {
@@ -32,19 +37,7 @@ internal static class Program
             return 0;
         }
 
-        ApplicationConfiguration.Initialize();
-        var isFirstRun = !File.Exists(NetPulseContext.SettingsStore.Path);
-        var settings = NetPulseContext.SettingsStore.Load().Normalize();
-        // Settings from before v0.3 have no language: those users have been using the Chinese UI.
-        settings.Language ??= isFirstRun ? UiLanguage.Auto : UiLanguage.Chinese;
-        Lang.Use(settings.Language.Value);
-        Application.SetColorMode(settings.WindowTheme switch
-        {
-            ThemeMode.Dark => SystemColorMode.Dark,
-            ThemeMode.Light => SystemColorMode.Classic,
-            _ => SystemColorMode.System,
-        });
-        Application.SetDefaultFont(CreateUiFont());
+        var settings = InitializeUi();
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) => ErrorLog.Write(e.Exception, "UI thread");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => ErrorLog.Write(e.ExceptionObject as Exception, "Unhandled");
@@ -58,6 +51,49 @@ internal static class Program
         // Hand the mutex over cleanly, e.g. to the elevated copy waiting in AcquireSingleInstance.
         instance.ReleaseMutex();
         return 0;
+    }
+
+    /// <summary>Language, theme and font from the settings; returns the loaded settings.</summary>
+    private static AppSettings InitializeUi()
+    {
+        ApplicationConfiguration.Initialize();
+        var isFirstRun = !File.Exists(NetPulseContext.SettingsStore.Path);
+        var settings = NetPulseContext.SettingsStore.Load().Normalize();
+        // Settings from before v0.3 have no language: those users have been using the Chinese UI.
+        settings.Language ??= isFirstRun ? UiLanguage.Auto : UiLanguage.Chinese;
+        Lang.Use(settings.Language.Value);
+        Application.SetColorMode(settings.WindowTheme switch
+        {
+            ThemeMode.Dark => SystemColorMode.Dark,
+            ThemeMode.Light => SystemColorMode.Classic,
+            _ => SystemColorMode.System,
+        });
+        Application.SetDefaultFont(CreateUiFont());
+        return settings;
+    }
+
+    /// <summary>
+    /// Takes the instance lock first, so NetPulse cannot run while its files are removed. From the settings
+    /// page (--restarted) the running copy is exiting, so its lock is waited for.
+    /// </summary>
+    private static int RunUninstaller(string[] args)
+    {
+        InitializeUi();
+        using var instance = AcquireSingleInstance(args.Contains(RestartedArgument));
+        if (instance is null)
+        {
+            Uninstaller.ShowStillRunning();
+            return 1;
+        }
+
+        try
+        {
+            return Uninstaller.Run(args.Contains(Uninstaller.QuietArgument));
+        }
+        finally
+        {
+            instance.ReleaseMutex();
+        }
     }
 
     /// <summary>Returns the owned mutex, or null if another instance is running.</summary>

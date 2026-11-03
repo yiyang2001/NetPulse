@@ -111,19 +111,9 @@ internal static class ElevatedAutostart
     /// <summary>Copies the running build into Program Files (a single-file publish is just the exe).</summary>
     private static void CopyApplication()
     {
-        if (IsRunningInstalledCopy)
+        if (!IsRunningInstalledCopy)
         {
-            return;
-        }
-
-        var source = AppContext.BaseDirectory;
-        Directory.CreateDirectory(InstallDirectory);
-        var files = File.Exists(Path.Combine(source, "NetPulse.dll"))
-            ? Directory.EnumerateFiles(source).Where(f => Path.GetExtension(f).ToLowerInvariant() is ".dll" or ".exe" or ".json" or ".pdb")
-            : [Environment.ProcessPath ?? Application.ExecutablePath];
-        foreach (var file in files)
-        {
-            File.Copy(file, Path.Combine(InstallDirectory, Path.GetFileName(file)), overwrite: true);
+            AppFiles.CopyRunningBuild(InstallDirectory);
         }
     }
 

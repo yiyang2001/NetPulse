@@ -4,7 +4,10 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>0.6.0</Version>
+    <Version>0.7.0</Version>
+    <!-- GitHub "owner/repo" whose releases the opt-in update check reads; empty builds have no update check.
+         Set it here or with: dotnet publish ... -p:NetPulseUpdateRepository=owner/repo -->
+    <NetPulseUpdateRepository Condition="'$(NetPulseUpdateRepository)' == ''"></NetPulseUpdateRepository>
     <Company>NetPulse</Company>
     <Product>NetPulse</Product>
     <Copyright>NetPulse contributors</Copyright>

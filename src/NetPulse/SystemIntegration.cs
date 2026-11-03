@@ -30,6 +30,17 @@ internal static class StartupRegistration
         }
     }
 
+    /// <summary>Deletes the entry when it starts an exe inside <paramref name="directory"/> (used by uninstall).</summary>
+    public static void RemoveIfInside(string directory)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+        var prefix = "\"" + Path.TrimEndingDirectorySeparator(directory) + Path.DirectorySeparatorChar;
+        if (key?.GetValue(ValueName) is string value && value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            key.DeleteValue(ValueName, throwOnMissingValue: false);
+        }
+    }
+
     /// <summary>Points an existing entry at the current executable, e.g. after the app folder was moved.</summary>
     public static void RefreshPathIfEnabled()
     {

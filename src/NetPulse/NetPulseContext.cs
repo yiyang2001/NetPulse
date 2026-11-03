@@ -46,6 +46,8 @@ internal sealed class NetPulseContext : ApplicationContext
     private bool _importing; // a restored backup is on disk; the in-memory state must not overwrite it
     private readonly SpeedTestService _speedTests = new();
     private readonly CancellationTokenSource _speedTestCancel = new();
+    private readonly UpdateService _updates = new();
+    private Uri? _balloonLink; // opened when the balloon now showing is clicked
     private readonly ProgramLimitTracker _programLimits = new();
     private SustainedSpeedDetector? _speedDetector;
     private (SpeedAlertDirection, long, int)? _speedDetectorKey;
@@ -86,6 +88,16 @@ internal sealed class NetPulseContext : ApplicationContext
                 ShowMainWindow(MainTab.Usage);
             }
         };
+        _tray.BalloonTipClicked += (_, _) =>
+        {
+            if (_balloonLink is { } link)
+            {
+                Ui.OpenUri(link.AbsoluteUri);
+            }
+
+            _balloonLink = null;
+        };
+        _tray.BalloonTipClosed += (_, _) => _balloonLink = null;
         _tray.Visible = true;
 
         _widget.Icon = _icon;
@@ -178,6 +190,7 @@ internal sealed class NetPulseContext : ApplicationContext
             }
 
             _logoTrayIcon.Dispose();
+            _updates.Dispose();
             _mainWindow?.Dispose();
             _processTraffic.Dispose();
             _widget.Dispose();
@@ -309,7 +322,7 @@ internal sealed class NetPulseContext : ApplicationContext
         {
             var limit = ByteFormatter.FormatSpeed(alert.ThresholdBytesPerSecond, _settings.Unit);
             var now = ByteFormatter.FormatSpeed(upload ? sample.UploadBytesPerSecond : sample.DownloadBytesPerSecond, _settings.Unit);
-            _tray.ShowBalloonTip(
+            ShowBalloon(
                 10_000,
                 upload ? T("上传速度持续偏高", "Upload speed stays high") : T("下载速度持续偏高", "Download speed stays high"),
                 T($"已连续 {alert.Minutes} 分钟超过 {limit}，当前 {now}。可在“进程流量”中查看是哪个程序。", $"Above {limit} for {alert.Minutes} minutes, now {now}. Check the Programs tab to see which program."),
@@ -346,6 +359,61 @@ internal sealed class NetPulseContext : ApplicationContext
         }
     }
 
+    /// <summary>Once a day while the user has the update check on; only tells, never downloads.</summary>
+    private void CheckForUpdates()
+    {
+        var check = _settings.UpdateCheck;
+        if (_exiting || !UpdateService.IsConfigured || _updates.IsBusy || !check.IsDue(DateTime.Now))
+        {
+            return;
+        }
+
+        check.LastCheck = DateTime.Now; // also on failure: offline PCs are not asked again every two seconds
+        SaveSettings();
+        _ = CheckForUpdatesAsync();
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        try
+        {
+            var release = await _updates.GetLatestAsync(_speedTestCancel.Token);
+            if (release is null || !UpdateFeed.IsNewer(release, UpdateService.CurrentVersion) || _exiting)
+            {
+                return;
+            }
+
+            var version = release.Version.ToString();
+            if (_settings.UpdateCheck.NotifiedVersion == version)
+            {
+                return; // announced once; the settings page still shows it
+            }
+
+            _settings.UpdateCheck.NotifiedVersion = version;
+            SaveSettings();
+            ShowBalloon(
+                10_000,
+                T($"NetPulse {version} 已发布", $"NetPulse {version} is available"),
+                T($"当前是 {UpdateService.CurrentVersion}。点击这里打开下载页面。", $"You have {UpdateService.CurrentVersion}. Click here to open the download page."),
+                ToolTipIcon.Info,
+                release.Page);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
+        {
+            // Offline or GitHub unreachable: try again tomorrow, no need to bother the user.
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Write(ex, "UpdateCheck"); // nobody awaits this task, so it must not escape
+        }
+    }
+
+    private void ShowBalloon(int timeout, string title, string text, ToolTipIcon icon, Uri? link = null)
+    {
+        _balloonLink = link;
+        _tray.ShowBalloonTip(timeout, title, text, icon);
+    }
+
     private void CheckProgramAlert()
     {
         var alert = _settings.ProgramAlert;
@@ -362,7 +430,7 @@ internal sealed class NetPulseContext : ApplicationContext
 
         var names = string.Join(", ", over.Take(3).Select(a => $"{a.Name} ({ByteFormatter.FormatSize(a.Total)})"))
             + (over.Count > 3 ? T($" 等 {over.Count} 个程序", $" and {over.Count - 3} more") : string.Empty);
-        _tray.ShowBalloonTip(
+        ShowBalloon(
             10_000,
             T("程序今日流量超出设定", "Program over its daily limit"),
             T($"超过 {ByteFormatter.FormatSize(alert.LimitBytes)}：{names}", $"Over {ByteFormatter.FormatSize(alert.LimitBytes)}: {names}"),
@@ -387,7 +455,7 @@ internal sealed class NetPulseContext : ApplicationContext
         var change = summary.PreviousWeek.Total > 0
             ? T($"，比前一周{((double)summary.Week.Total / summary.PreviousWeek.Total) - 1:+0%;-0%;±0%}", $", {((double)summary.Week.Total / summary.PreviousWeek.Total) - 1:+0%;-0%;±0%} vs the week before")
             : string.Empty;
-        _tray.ShowBalloonTip(
+        ShowBalloon(
             10_000,
             T($"上周流量（{summary.From:M/d} – {summary.To:M/d}）", $"Last week ({summary.From:M/d} – {summary.To:M/d})"),
             T($"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}，合计 {ByteFormatter.FormatSize(summary.Week.Total)}{change}", $"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}, {ByteFormatter.FormatSize(summary.Week.Total)} in total{change}"),
@@ -444,6 +512,7 @@ internal sealed class NetPulseContext : ApplicationContext
         _processTraffic.RecordHistory();
         CheckProgramAlert();
         CheckSpeedTestSchedule();
+        CheckForUpdates();
 
         if (DateTime.UtcNow - _lastSave >= SaveInterval)
         {
@@ -502,11 +571,11 @@ internal sealed class NetPulseContext : ApplicationContext
         var name = networkLabel is null ? string.Empty : $"{networkLabel}: ";
         if (alert == PlanAlertLevel.Exceeded)
         {
-            _tray.ShowBalloonTip(10_000, name + T("流量套餐已用完", "Data plan used up"), T($"本周期已使用 {used}。", $"Used {used} this cycle."), ToolTipIcon.Warning);
+            ShowBalloon(10_000, name + T("流量套餐已用完", "Data plan used up"), T($"本周期已使用 {used}。", $"Used {used} this cycle."), ToolTipIcon.Warning);
         }
         else
         {
-            _tray.ShowBalloonTip(10_000, name + T("流量套餐即将用完", "Data plan almost used up"), T($"本周期已使用 {used}（{status.Fraction:P0}）。", $"Used {used} this cycle ({status.Fraction:P0})."), ToolTipIcon.Info);
+            ShowBalloon(10_000, name + T("流量套餐即将用完", "Data plan almost used up"), T($"本周期已使用 {used}（{status.Fraction:P0}）。", $"Used {used} this cycle ({status.Fraction:P0})."), ToolTipIcon.Info);
         }
     }
 
@@ -514,7 +583,7 @@ internal sealed class NetPulseContext : ApplicationContext
     {
         if (_mainWindow is null || _mainWindow.IsDisposed)
         {
-            _settingsPage = new SettingsPage(_settings, ExportBackup, ImportBackup);
+            _settingsPage = new SettingsPage(_settings, ExportBackup, ImportBackup, _updates, InstallAndRestart, UninstallAndExit);
             _settingsPage.SettingsChanged += (_, _) => ApplySettings(save: true);
             _mainWindow = new MainWindow(
             [
@@ -592,6 +661,33 @@ internal sealed class NetPulseContext : ApplicationContext
             throw new IOException(T("已恢复数据，但无法自动重启，请手动重启 NetPulse。", "The data was restored, but NetPulse could not restart by itself. Please start it again."), ex);
         }
 
+        Exit();
+    }
+
+    /// <summary>
+    /// Copies this build into the per-user install folder and hands over to that copy. Throws (and keeps
+    /// running) when the copy fails; the new process waits for this one's instance lock.
+    /// </summary>
+    private void InstallAndRestart()
+    {
+        SaveUsage();
+        SaveSettings();
+        UserInstall.Install();
+        UserInstall.StartInstalledCopy($"{Program.RestartedArgument} {Program.OpenArgumentPrefix}{MainTab.Settings}");
+        Exit();
+    }
+
+    /// <summary>Starts the uninstaller, which waits for this instance to exit before it removes anything.</summary>
+    private void UninstallAndExit()
+    {
+        SaveUsage();
+        SaveSettings();
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = Environment.ProcessPath ?? Application.ExecutablePath,
+            Arguments = $"{InstallLayout.UninstallArgument} {Program.RestartedArgument}{AppPaths.ProfileArgument}",
+            WorkingDirectory = Path.GetTempPath(), // not the install folder, which is about to be deleted
+        })?.Dispose();
         Exit();
     }
 
