@@ -11,9 +11,15 @@ internal sealed class UsagePage : UserControl, IActivatablePage
     private const int ChartDays = 30;
     private static readonly string[] WeekdayNames = [T("周日", "Sun"), T("周一", "Mon"), T("周二", "Tue"), T("周三", "Wed"), T("周四", "Thu"), T("周五", "Fri"), T("周六", "Sat")];
 
-    private readonly UsageLedger _ledger;
+    private readonly UsageLedger _allLedger;
+    private readonly NetworkUsageLedger _networks;
     private readonly AppSettings _settings;
     private readonly Action _saveUsage;
+    private readonly Action _saveSettings;
+    private readonly ComboBox _network = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
+    private readonly Button _networkPlanButton = new() { Text = T("此网络的套餐…", "Plan for this network…"), AutoSize = true };
+    private string? _networkKey; // null: all networks
+    private bool _loadingNetworks;
     private readonly Label _todayValue = ValueLabel();
     private readonly Label _cycleTitle = TitleLabel(T("本周期", "This cycle"));
     private readonly Label _cycleValue = ValueLabel();
@@ -28,11 +34,13 @@ internal sealed class UsagePage : UserControl, IActivatablePage
         HeaderStyle = ColumnHeaderStyle.Nonclickable,
     };
 
-    public UsagePage(UsageLedger ledger, AppSettings settings, Action saveUsage)
+    public UsagePage(UsageLedger ledger, NetworkUsageLedger networks, AppSettings settings, Action saveUsage, Action saveSettings)
     {
-        _ledger = ledger;
+        _allLedger = ledger;
+        _networks = networks;
         _settings = settings;
         _saveUsage = saveUsage;
+        _saveSettings = saveSettings;
         Padding = new Padding(12);
 
         _list.Columns.Add(T("日期", "Date"), 150);
@@ -66,11 +74,23 @@ internal sealed class UsagePage : UserControl, IActivatablePage
         };
         buttons.Controls.Add(resetButton);
         buttons.Controls.Add(exportButton);
+        buttons.Controls.Add(_networkPlanButton);
+        _networkPlanButton.Click += (_, _) => EditNetworkPlan();
+        _network.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_loadingNetworks)
+            {
+                _networkKey = (_network.SelectedItem as NetworkItem)?.Key;
+                RefreshData();
+            }
+        };
+        var networkBar = Ui.Toolbar(new Label { Text = T("网络", "Network") }, _network);
 
         // Dock order: last added is laid out first.
         Controls.Add(_list);
         Controls.Add(chartPanel);
         Controls.Add(cards);
+        Controls.Add(networkBar);
         Controls.Add(buttons);
         _refreshTimer.Tick += (_, _) => RefreshData();
     }
@@ -93,16 +113,55 @@ internal sealed class UsagePage : UserControl, IActivatablePage
         base.Dispose(disposing);
     }
 
+    /// <summary>The totals of all networks, or of the one picked in the selector.</summary>
+    private UsageLedger Ledger => _networkKey is null ? _allLedger : _networks.Get(_networkKey) ?? new UsageLedger();
+
+    private DataPlanSettings ActivePlan =>
+        _networkKey is null ? _settings.Plan
+        : _settings.NetworkPlans.TryGetValue(_networkKey, out var plan) ? plan : new DataPlanSettings();
+
+    private void LoadNetworks()
+    {
+        var known = _networks.Networks;
+        var current = _network.Items.Cast<NetworkItem>().Select(i => i.Key).ToList();
+        if (current.SequenceEqual(new string?[] { null }.Concat(known.Select(n => n.Key))))
+        {
+            return;
+        }
+
+        _loadingNetworks = true;
+        try
+        {
+            _network.Items.Clear();
+            _network.Items.Add(new NetworkItem(null, T("全部网络", "All networks")));
+            foreach (var network in known)
+            {
+                _network.Items.Add(new NetworkItem(network.Key, network.Label));
+            }
+
+            // A selected network that no longer has data (pruned or cleared) falls back to "all".
+            _networkKey = known.Any(n => n.Key == _networkKey) ? _networkKey : null;
+            _network.SelectedItem = _network.Items.Cast<NetworkItem>().First(i => i.Key == _networkKey);
+        }
+        finally
+        {
+            _loadingNetworks = false;
+        }
+    }
+
     public void RefreshData()
     {
+        LoadNetworks();
+        _networkPlanButton.Visible = _networkKey is not null;
+        var ledger = Ledger;
         var today = DateOnly.FromDateTime(DateTime.Now);
-        var todayUsage = _ledger.Get(today);
+        var todayUsage = ledger.Get(today);
         _todayValue.Text = Describe(todayUsage);
 
-        var plan = _settings.Plan;
-        var (cycle, status) = DataPlanCalculator.Evaluate(_ledger, plan, today);
+        var plan = ActivePlan;
+        var (cycle, status) = DataPlanCalculator.Evaluate(ledger, plan, today);
         _cycleTitle.Text = T($"本周期（{cycle.Start:M/d} – {cycle.End:M/d}）", $"This cycle ({cycle.Start:M/d} – {cycle.End:M/d})");
-        _cycleValue.Text = Describe(_ledger.Sum(cycle.Start, cycle.End));
+        _cycleValue.Text = Describe(ledger.Sum(cycle.Start, cycle.End));
 
         if (plan.Enabled)
         {
@@ -114,11 +173,13 @@ internal sealed class UsagePage : UserControl, IActivatablePage
         }
         else
         {
-            _planValue.Text = T("未启用（可在“设置”中开启）", "Off (turn it on in Settings)");
+            _planValue.Text = _networkKey is null
+                ? T("未启用（可在“设置”中开启）", "Off (turn it on in Settings)")
+                : T("此网络没有单独的套餐", "No separate plan for this network");
             _planBar.Visible = false;
         }
 
-        var days = _ledger.Range(today.AddDays(-(ChartDays - 1)), today);
+        var days = ledger.Range(today.AddDays(-(ChartDays - 1)), today);
         _chart.SetData(days);
 
         _list.BeginUpdate();
@@ -176,7 +237,7 @@ internal sealed class UsagePage : UserControl, IActivatablePage
         }
 
         var csv = new StringBuilder("date,downloaded_bytes,uploaded_bytes,total_bytes\r\n");
-        foreach (var day in _ledger.ToList())
+        foreach (var day in Ledger.ToList())
         {
             csv.Append(CultureInfo.InvariantCulture, $"{day.Date:yyyy-MM-dd},{day.Downloaded},{day.Uploaded},{day.Total}\r\n");
         }
@@ -198,9 +259,37 @@ internal sealed class UsagePage : UserControl, IActivatablePage
             MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
         if (answer == DialogResult.Yes)
         {
-            _ledger.Clear();
+            _allLedger.Clear();
+            _networks.Clear();
             _saveUsage();
             RefreshData();
         }
+    }
+
+    private void EditNetworkPlan()
+    {
+        if (_networkKey is not { } key)
+        {
+            return;
+        }
+
+        var plan = _settings.NetworkPlans.TryGetValue(key, out var existing) ? existing : new DataPlanSettings { Enabled = true };
+        var label = (_network.SelectedItem as NetworkItem)?.Label ?? key;
+        if (!PlanDialog.Edit(this, label, plan))
+        {
+            return;
+        }
+
+        // A changed limit or cycle should alert again.
+        plan.AlertedCycleStart = null;
+        plan.AlertedLevel = PlanAlertLevel.None;
+        _settings.NetworkPlans[key] = plan;
+        _saveSettings();
+        RefreshData();
+    }
+
+    private sealed record NetworkItem(string? Key, string Label)
+    {
+        public override string ToString() => Label;
     }
 }

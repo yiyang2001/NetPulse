@@ -1,5 +1,6 @@
 using NetPulse.Core;
 using NetPulse.Platform;
+using System.Security.AccessControl;
 
 namespace NetPulse;
 
@@ -96,12 +97,32 @@ internal static class Program
         return null;
     }
 
+    /// <summary>
+    /// Creates the event a second launch signals. When this copy is elevated, the default ACL only admits
+    /// elevated processes, so the current user is granted access explicitly: otherwise a normal-token
+    /// launch could not wake the elevated instance.
+    /// </summary>
+    internal static EventWaitHandle CreateShowWindowSignal()
+    {
+        var security = new EventWaitHandleSecurity();
+        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+        if (user is not null)
+        {
+            security.AddAccessRule(new EventWaitHandleAccessRule(
+                user,
+                EventWaitHandleRights.Modify | EventWaitHandleRights.Synchronize,
+                System.Security.AccessControl.AccessControlType.Allow));
+        }
+
+        return EventWaitHandleAcl.Create(false, EventResetMode.AutoReset, ShowWindowEventName, out _, security);
+    }
+
     /// <summary>Asks the running instance to show its window instead of starting a second copy.</summary>
     private static void SignalRunningInstance()
     {
         try
         {
-            if (EventWaitHandle.TryOpenExisting(ShowWindowEventName, out var signal))
+            if (EventWaitHandleAcl.TryOpenExisting(ShowWindowEventName, EventWaitHandleRights.Modify, out var signal))
             {
                 using (signal)
                 {
@@ -111,7 +132,7 @@ internal static class Program
         }
         catch (UnauthorizedAccessException)
         {
-            // Elevated instance: a normal process cannot signal it. Nothing else to do.
+            // Instance started by an older version: its event has the default ACL. Nothing else to do.
         }
     }
 

@@ -16,6 +16,9 @@ internal sealed class SettingsPage : UserControl
     private readonly ComboBox _theme = DropDown(T("跟随任务栏", "Match taskbar"), T("深色", "Dark"), T("浅色", "Light"));
     private readonly ComboBox _language = DropDown(T("跟随 Windows", "Match Windows"), "中文", "English");
     private readonly ComboBox _windowTheme = DropDown(T("跟随 Windows 应用模式", "Match Windows app mode"), T("深色", "Dark"), T("浅色", "Light"));
+    private readonly ComboBox _layout = DropDown(T("两行（下载、上传）", "Two lines (download, upload)"), T("一行", "One line"), T("只显示合计", "Total only"));
+    private readonly CheckBox _miniGraph = Check(T("显示最近 1 分钟的迷你曲线", "Show a mini graph of the last minute"));
+    private readonly ComboBox _trayIcon = DropDown(T("NetPulse 图标", "NetPulse logo"), T("下载速度", "Download speed"), T("上传速度", "Upload speed"));
     private readonly TrackBar _opacity = new() { Minimum = 30, Maximum = 100, TickFrequency = 10, Width = 220, AutoSize = false, Height = 32 };
     private readonly NumericUpDown _fontSize = Number(7, 24, 0.5m, 1);
     private readonly CheckBox _showWidget = Check(T("显示悬浮窗", "Show widget"));
@@ -51,6 +54,9 @@ internal sealed class SettingsPage : UserControl
             Row(T("刷新间隔（毫秒）", "Refresh interval (ms)"), _interval),
             Row(T("网卡", "Adapter"), _adapter),
             _excludeVirtual,
+            Row(T("悬浮窗显示", "Widget layout"), _layout),
+            _miniGraph,
+            Row(T("托盘图标显示", "Tray icon shows"), _trayIcon),
             Row(T("悬浮窗主题", "Widget theme"), _theme),
             Row(T("窗口主题（重启生效）", "Window theme (on restart)"), _windowTheme),
             Row(T("语言（重启生效）", "Language (on restart)"), _language),
@@ -83,7 +89,7 @@ internal sealed class SettingsPage : UserControl
             openFolder));
         Controls.Add(layout);
 
-        foreach (var combo in new[] { _unit, _adapter, _theme, _windowTheme, _language })
+        foreach (var combo in new[] { _unit, _adapter, _theme, _windowTheme, _language, _layout, _trayIcon })
         {
             combo.SelectedIndexChanged += OnChanged;
         }
@@ -93,7 +99,7 @@ internal sealed class SettingsPage : UserControl
             number.ValueChanged += OnChanged;
         }
 
-        foreach (var check in new[] { _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
+        foreach (var check in new[] { _miniGraph, _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
         {
             check.CheckedChanged += OnChanged;
         }
@@ -124,6 +130,9 @@ internal sealed class SettingsPage : UserControl
             _interval.Value = _settings.RefreshIntervalMs;
             LoadAdapters();
             _excludeVirtual.Checked = _settings.ExcludeVirtualAdapters;
+            _layout.SelectedIndex = (int)_settings.Layout;
+            _miniGraph.Checked = _settings.ShowMiniGraph;
+            _trayIcon.SelectedIndex = (int)_settings.TrayIcon;
             _theme.SelectedIndex = (int)_settings.Theme;
             _windowTheme.SelectedIndex = (int)_settings.WindowTheme;
             _language.SelectedIndex = (int)(_settings.Language ?? UiLanguage.Auto);
@@ -160,6 +169,9 @@ internal sealed class SettingsPage : UserControl
         _settings.RefreshIntervalMs = (int)_interval.Value;
         _settings.AdapterId = (_adapter.SelectedItem as AdapterItem)?.Id;
         _settings.ExcludeVirtualAdapters = _excludeVirtual.Checked;
+        _settings.Layout = (WidgetLayout)Math.Max(0, _layout.SelectedIndex);
+        _settings.ShowMiniGraph = _miniGraph.Checked;
+        _settings.TrayIcon = (TrayIconMode)Math.Max(0, _trayIcon.SelectedIndex);
         _settings.Theme = (ThemeMode)Math.Max(0, _theme.SelectedIndex);
         _settings.WindowTheme = (ThemeMode)Math.Max(0, _windowTheme.SelectedIndex);
         _settings.Language = (UiLanguage)Math.Max(0, _language.SelectedIndex);
@@ -258,7 +270,6 @@ internal sealed class SettingsPage : UserControl
     {
         _planLimit.Enabled = _planDay.Enabled = _planWarn.Enabled = _planUpload.Enabled = _planEnabled.Checked;
     }
-
     private void OpenDataFolder()
     {
         Directory.CreateDirectory(AppPaths.DataDirectory);

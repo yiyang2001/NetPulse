@@ -9,12 +9,22 @@ namespace NetPulse;
 internal sealed class SpeedWidget : Form
 {
     private const int SnapDistance = 12;
+    private static readonly TimeSpan MiniGraphWindow = TimeSpan.FromSeconds(60);
 
     private readonly ToolTip _toolTip = new() { InitialDelay = 400, ReshowDelay = 200 };
     private WidgetPalette _palette = WidgetPalette.Dark;
     private SpeedUnit _unit = SpeedUnit.Bytes;
     private string _downText = "0 B/s";
     private string _upText = "0 B/s";
+    private string _totalText = "0 B/s";
+    private WidgetLayout _layout = WidgetLayout.TwoLines;
+    private bool _showGraph;
+    private SpeedHistory? _history;
+    private int _graphWidth;
+    private int _graphGap;
+    private int _triangleSize;
+    private int _valueWidth;
+    private int _cellGap;
     private string _toolTipText = string.Empty;
     private bool _locked;
     private bool _clickThrough;
@@ -63,6 +73,8 @@ internal sealed class SpeedWidget : Form
         _unit = settings.Unit;
         _palette = WidgetPalette.For(settings.Theme);
         _locked = settings.LockPosition;
+        _layout = settings.Layout;
+        _showGraph = settings.ShowMiniGraph && _history is not null;
         Opacity = settings.Opacity;
         BackColor = _palette.Background;
 
@@ -75,18 +87,33 @@ internal sealed class SpeedWidget : Form
 
         SetTopMost(settings.AlwaysOnTop);
         SetClickThrough(settings.ClickThrough);
+
+        // A bigger or smaller widget keeps its anchored corner instead of growing off the screen.
+        var before = IsHandleCreated && Visible ? CapturePlacement() : null;
         RecalculateLayout();
+        if (before is not null)
+        {
+            var screen = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == before.Screen) ?? Screen.FromRectangle(Bounds);
+            Location = before.Resolve(screen.WorkingArea, Size, DeviceDpi / 96.0);
+        }
+
         Invalidate();
     }
+
+    /// <summary>Source of the mini graph; the owner keeps adding samples to it.</summary>
+    public void SetHistory(SpeedHistory history) => _history = history;
 
     public void ShowSpeed(SpeedSample sample)
     {
         var down = ByteFormatter.FormatSpeed(sample.DownloadBytesPerSecond, _unit);
         var up = ByteFormatter.FormatSpeed(sample.UploadBytesPerSecond, _unit);
-        if (down != _downText || up != _upText)
+        var total = ByteFormatter.FormatSpeed(sample.DownloadBytesPerSecond + sample.UploadBytesPerSecond, _unit);
+        // The graph moves every sample even when the texts stay the same.
+        if (_showGraph || down != _downText || up != _upText || total != _totalText)
         {
             _downText = down;
             _upText = up;
+            _totalText = total;
             Invalidate();
         }
     }
@@ -100,9 +127,26 @@ internal sealed class SpeedWidget : Form
         }
     }
 
-    /// <summary>Places the widget at the saved spot if it is still on a screen, else bottom-right of the primary screen.</summary>
-    public void RestorePosition(int? x, int? y)
+    public WidgetPlacement CapturePlacement()
     {
+        var screen = Screen.FromRectangle(Bounds);
+        return WidgetPlacement.Capture(screen.DeviceName, screen.WorkingArea, Bounds, DeviceDpi / 96.0);
+    }
+
+    /// <summary>
+    /// Places the widget at the saved spot on the screen it was on; falls back to the primary screen's
+    /// bottom-right corner when nothing was saved or the screen is gone.
+    /// </summary>
+    public void RestorePosition(WidgetPlacement? placement, int? x, int? y)
+    {
+        if (placement is not null)
+        {
+            var target = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == placement.Screen)
+                ?? Screen.PrimaryScreen ?? Screen.AllScreens[0];
+            Location = placement.Resolve(target.WorkingArea, Size, DeviceDpi / 96.0);
+            return;
+        }
+
         if (x is { } left && y is { } top)
         {
             var center = new Point(left + Width / 2, top + Height / 2);
@@ -175,25 +219,93 @@ internal sealed class SpeedWidget : Form
     {
         var g = e.Graphics;
         g.Clear(_palette.Background);
-        const TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter;
+        const TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.Right;
 
         var left = _textPadding.Left;
-        var valueLeft = left + _arrowWidth;
-        var valueWidth = ClientSize.Width - valueLeft - _textPadding.Right;
         var top = _textPadding.Top;
+        switch (_layout)
+        {
+            case WidgetLayout.OneLine:
+                DrawCell(g, left, top, _downText, flags, down: true, up: false);
+                DrawCell(g, left + _arrowWidth + _valueWidth + _cellGap, top, _upText, flags, down: false, up: true);
+                break;
+            case WidgetLayout.TotalOnly:
+                DrawCell(g, left, top, _totalText, flags, down: true, up: true);
+                break;
+            default:
+                DrawCell(g, left, top, _downText, flags, down: true, up: false);
+                DrawCell(g, left, top + _lineHeight, _upText, flags, down: false, up: true);
+                break;
+        }
 
-        DrawTriangle(g, left, top, pointsDown: true, _palette.Download);
-        TextRenderer.DrawText(g, _downText, Font, new Rectangle(valueLeft, top, valueWidth, _lineHeight), _palette.Text, flags | TextFormatFlags.Right);
+        if (_showGraph && _history is not null)
+        {
+            var graph = new Rectangle(
+                ClientSize.Width - _textPadding.Right - _graphWidth,
+                _textPadding.Top,
+                _graphWidth,
+                ClientSize.Height - _textPadding.Vertical);
+            DrawMiniGraph(g, graph, _history.Recent(MiniGraphWindow));
+        }
+    }
 
-        top += _lineHeight;
-        DrawTriangle(g, left, top, pointsDown: false, _palette.Upload);
-        TextRenderer.DrawText(g, _upText, Font, new Rectangle(valueLeft, top, valueWidth, _lineHeight), _palette.Text, flags | TextFormatFlags.Right);
+    /// <summary>One arrow (both for the total) and a right-aligned value.</summary>
+    private void DrawCell(Graphics g, int left, int lineTop, string text, TextFormatFlags flags, bool down, bool up)
+    {
+        var x = left;
+        if (down)
+        {
+            DrawTriangle(g, x, lineTop, pointsDown: true, _palette.Download);
+            x += _triangleSize + 1;
+        }
+
+        if (up)
+        {
+            DrawTriangle(g, x, lineTop, pointsDown: false, _palette.Upload);
+            x += _triangleSize + 1;
+        }
+
+        var valueLeft = left + (down && up ? TotalArrowBlock : _arrowWidth);
+        TextRenderer.DrawText(g, text, Font, new Rectangle(valueLeft, lineTop, _valueWidth, _lineHeight), _palette.Text, flags);
+    }
+
+    private int TotalArrowBlock => (2 * _triangleSize) + 2 + (_arrowWidth - _triangleSize);
+
+    private void DrawMiniGraph(Graphics g, Rectangle area, IReadOnlyList<SpeedPoint> points)
+    {
+        if (points.Count < 2 || area.Width < 4 || area.Height < 4)
+        {
+            return;
+        }
+
+        var peak = points.Max(p => Math.Max(p.DownloadBytesPerSecond, p.UploadBytesPerSecond));
+        var top = NiceScale.Ceiling(peak, _unit);
+        var newest = points[^1].Time;
+        PointF Map(SpeedPoint p, double value) => new(
+            area.Right - (float)((newest - p.Time).TotalSeconds / MiniGraphWindow.TotalSeconds * area.Width),
+            area.Bottom - (float)(Math.Min(value / top, 1) * area.Height));
+
+        var smoothing = g.SmoothingMode;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using (var baseline = new Pen(Color.FromArgb(70, _palette.Text), 1f))
+        {
+            g.DrawLine(baseline, area.Left, area.Bottom, area.Right, area.Bottom);
+        }
+
+        using (var downPen = new Pen(_palette.Download, 1.5f))
+        using (var upPen = new Pen(_palette.Upload, 1.5f))
+        {
+            g.DrawLines(downPen, points.Select(p => Map(p, p.DownloadBytesPerSecond)).ToArray());
+            g.DrawLines(upPen, points.Select(p => Map(p, p.UploadBytesPerSecond)).ToArray());
+        }
+
+        g.SmoothingMode = smoothing;
     }
 
     /// <summary>Solid triangles read better than the thin ↓/↑ glyphs of most UI fonts at small sizes.</summary>
     private void DrawTriangle(Graphics g, int left, int lineTop, bool pointsDown, Color color)
     {
-        var size = _lineHeight * 0.42f;
+        var size = (float)_triangleSize;
         var cx = left + (size / 2f);
         var cy = lineTop + (_lineHeight / 2f);
         var half = size / 2f;
@@ -226,11 +338,25 @@ internal sealed class SpeedWidget : Form
         var scale = DeviceDpi / 96f;
 
         _lineHeight = valueSize.Height + (int)(1 * scale);
-        _arrowWidth = (int)(_lineHeight * 0.42f) + (int)(8 * scale);
+        _triangleSize = (int)(_lineHeight * 0.42f);
+        _arrowWidth = _triangleSize + (int)(8 * scale);
+        _valueWidth = valueSize.Width;
+        _cellGap = (int)(10 * scale);
+        _graphGap = (int)(8 * scale);
+        _graphWidth = (int)(56 * scale);
         _textPadding = new Padding((int)(8 * scale), (int)(4 * scale), (int)(8 * scale), (int)(4 * scale));
+
+        var textWidth = _layout switch
+        {
+            WidgetLayout.OneLine => (2 * (_arrowWidth + _valueWidth)) + _cellGap,
+            WidgetLayout.TotalOnly => TotalArrowBlock + _valueWidth,
+            _ => _arrowWidth + _valueWidth,
+        };
+        var textHeight = _layout == WidgetLayout.TwoLines ? 2 * _lineHeight : _lineHeight;
+        var graph = _showGraph ? _graphGap + _graphWidth : 0;
         ClientSize = new Size(
-            _textPadding.Horizontal + _arrowWidth + valueSize.Width,
-            _textPadding.Vertical + (2 * _lineHeight));
+            _textPadding.Horizontal + textWidth + graph,
+            _textPadding.Vertical + textHeight);
     }
 
     private void SetTopMost(bool topMost)

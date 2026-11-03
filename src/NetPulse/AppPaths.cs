@@ -29,6 +29,8 @@ internal static class AppPaths
 
     public static string SpeedTestFile => Path.Combine(DataDirectory, "speedtests.json");
 
+    public static string NetworkUsageFile => Path.Combine(DataDirectory, "network-usage.json");
+
     public static string ProcessUsageFile => Path.Combine(DataDirectory, "process-usage.json");
 
     public static string ErrorLogFile => Path.Combine(DataDirectory, "error.log");

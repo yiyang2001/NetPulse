@@ -30,6 +30,37 @@ public static class ByteFormatter
             : Scale(bytesPerSecond, 1024, ByteSpeedUnits, culture, trimZeros);
     }
 
+    /// <summary>
+    /// At most three characters ("0", "856", "1.2", "45") plus the index of the unit they are in
+    /// (0 = B, 1 = K, 2 = M, 3 = G), for places too small for a unit name such as the tray icon.
+    /// </summary>
+    public static (string Text, int UnitIndex) FormatCompact(double bytesPerSecond, SpeedUnit unit)
+    {
+        var step = unit == SpeedUnit.Bits ? 1000.0 : 1024.0;
+        var value = double.IsNaN(bytesPerSecond) || bytesPerSecond < 0 ? 0 : bytesPerSecond;
+        if (unit == SpeedUnit.Bits)
+        {
+            value *= 8;
+        }
+
+        var index = 0;
+        // Promote at 1000 so the number never needs four digits (1000–1023 would otherwise print as "1023").
+        while (value >= 999.5 && index < 3)
+        {
+            value /= step;
+            index++;
+        }
+
+        if (value >= 999.5)
+        {
+            return ("999", index); // beyond Gbps: saturate rather than overflow three characters
+        }
+
+        var text = index > 0 && value < 9.95 ? value.ToString("0.0", CultureInfo.InvariantCulture)
+            : Math.Round(value).ToString("0", CultureInfo.InvariantCulture);
+        return (text, index);
+    }
+
     public static string FormatSize(long bytes, CultureInfo? culture = null) =>
         Scale(Math.Max(0, bytes), 1024, SizeUnits, culture, trimZeros: false);
 

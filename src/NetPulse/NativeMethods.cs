@@ -35,6 +35,19 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool ReleaseCapture();
 
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool DestroyIcon(nint hIcon);
+
+    [LibraryImport("uxtheme.dll", StringMarshalling = StringMarshalling.Utf16)]
+    private static partial int SetWindowTheme(nint hWnd, string? subAppName, string? subIdList);
+
+    /// <summary>
+    /// WinForms dark mode leaves combo boxes and spin boxes light; the "DarkMode_CFD" visual style
+    /// (the one Explorer's own dropdowns use) draws them dark.
+    /// </summary>
+    public static void UseDarkControlTheme(nint hWnd) => _ = SetWindowTheme(hWnd, "DarkMode_CFD", null);
+
     [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
     public static partial nint SendMessage(nint hWnd, int msg, nint wParam, nint lParam);
 

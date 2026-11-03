@@ -65,6 +65,46 @@ internal static class Ui
         return bar;
     }
 
+    /// <summary>
+    /// In dark mode, gives every combo and spin box under <paramref name="root"/> (also ones added later)
+    /// the dark visual style, which WinForms does not apply by itself.
+    /// </summary>
+    public static void ApplyDarkControlStyles(Control root)
+    {
+        if (!Application.IsDarkModeEnabled)
+        {
+            return;
+        }
+
+        Style(root);
+        return;
+
+        static void Style(Control control)
+        {
+            if (control is ComboBox or NumericUpDown)
+            {
+                // WinForms applies its own theme while creating the handle; ours has to come after it.
+                void Apply() => control.BeginInvoke(() =>
+                {
+                    NativeMethods.UseDarkControlTheme(control.Handle);
+                    control.Invalidate();
+                });
+                if (control.IsHandleCreated)
+                {
+                    Apply();
+                }
+
+                control.HandleCreated += (_, _) => Apply();
+            }
+
+            control.ControlAdded += (_, e) => Style(e.Control!);
+            foreach (Control child in control.Controls)
+            {
+                Style(child);
+            }
+        }
+    }
+
     public static void OpenUri(string uri)
     {
         try

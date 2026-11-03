@@ -17,6 +17,9 @@ internal sealed class NetPulseContext : ApplicationContext
         new(AppPaths.SettingsFile, () => new AppSettings());
     private readonly JsonFileStore<UsageDocument> _usageStore =
         new(AppPaths.UsageFile, () => new UsageDocument());
+    private readonly JsonFileStore<NetworkUsageDocument> _networkUsageStore =
+        new(AppPaths.NetworkUsageFile, () => new NetworkUsageDocument());
+    private readonly WifiNetworkNames _networkNames = new();
     private readonly JsonFileStore<ProcessUsageDocument> _processUsageStore =
         new(AppPaths.ProcessUsageFile, () => new ProcessUsageDocument());
 
@@ -40,6 +43,9 @@ internal sealed class NetPulseContext : ApplicationContext
     private readonly ProcessTrafficService _processTraffic;
     private readonly SpeedHistory _speedHistory = new(TimeSpan.FromMinutes(10));
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private readonly Icon _logoTrayIcon;
+    private Icon? _speedTrayIcon;
+    private string? _trayIconKey;
     private MainWindow? _mainWindow;
     private SettingsPage? _settingsPage;
     private volatile bool _exiting; // also read by the show-window callback on a pool thread
@@ -50,7 +56,11 @@ internal sealed class NetPulseContext : ApplicationContext
     {
         _settings = settings;
         var ledger = new UsageLedger(_usageStore.Load().Days ?? []);
-        _monitor = new TrafficMonitor(ledger);
+        _monitor = new TrafficMonitor(ledger)
+        {
+            Networks = new NetworkUsageLedger(_networkUsageStore.Load().Networks ?? []),
+            IdentifyNetwork = _networkNames.Identify,
+        };
         _processTraffic = new ProcessTrafficService(new ProcessUsageLedger(_processUsageStore.Load().Days ?? []));
 
         using (var stream = typeof(NetPulseContext).Assembly.GetManifestResourceStream("NetPulse.ico"))
@@ -59,7 +69,8 @@ internal sealed class NetPulseContext : ApplicationContext
         }
 
         BuildMenu();
-        _tray.Icon = new Icon(_icon, SystemInformation.SmallIconSize);
+        _logoTrayIcon = new Icon(_icon, SystemInformation.SmallIconSize);
+        _tray.Icon = _logoTrayIcon;
         _tray.Text = AppPaths.AppName;
         _tray.ContextMenuStrip = _menu;
         _tray.MouseClick += (_, e) =>
@@ -84,8 +95,9 @@ internal sealed class NetPulseContext : ApplicationContext
                 Exit();
             }
         };
+        _widget.SetHistory(_speedHistory);
         _widget.ApplySettings(_settings);
-        _widget.RestorePosition(_settings.WidgetX, _settings.WidgetY);
+        _widget.RestorePosition(_settings.Placement, _settings.WidgetX, _settings.WidgetY);
         _ = _widget.Handle; // create the window now so it can marshal calls from other threads
 
         _sampleTimer.Tick += (_, _) => OnSample();
@@ -95,7 +107,7 @@ internal sealed class NetPulseContext : ApplicationContext
         _housekeepingTimer.Start();
 
         // A second launch signals this event instead of starting another copy.
-        _showWindowSignal = new EventWaitHandle(false, EventResetMode.AutoReset, Program.ShowWindowEventName);
+        _showWindowSignal = Program.CreateShowWindowSignal();
         _showWindowRegistration = ThreadPool.RegisterWaitForSingleObject(
             _showWindowSignal,
             (_, timedOut) =>
@@ -153,8 +165,13 @@ internal sealed class NetPulseContext : ApplicationContext
             _sampleTimer.Dispose();
             _housekeepingTimer.Dispose();
             _tray.Visible = false;
-            _tray.Icon?.Dispose();
             _tray.Dispose();
+            if (_speedTrayIcon is not null)
+            {
+                TrayIconRenderer.Destroy(_speedTrayIcon);
+            }
+
+            _logoTrayIcon.Dispose();
             _mainWindow?.Dispose();
             _processTraffic.Dispose();
             _widget.Dispose();
@@ -245,8 +262,9 @@ internal sealed class NetPulseContext : ApplicationContext
             return;
         }
 
-        _widget.ShowSpeed(sample);
         _speedHistory.Add(_clock.Elapsed, sample);
+        _widget.ShowSpeed(sample);
+        UpdateTrayIcon(sample);
 
         // NotifyIcon.Text is limited to 127 characters and updating it is relatively costly.
         var down = ByteFormatter.FormatSpeed(sample.DownloadBytesPerSecond, _settings.Unit);
@@ -260,6 +278,49 @@ internal sealed class NetPulseContext : ApplicationContext
             _widget.SetToolTipText(
                 T($"今天：↓ {ByteFormatter.FormatSize(today.Downloaded)}  ↑ {ByteFormatter.FormatSize(today.Uploaded)}\n双击打开流量统计", $"Today: ↓ {ByteFormatter.FormatSize(today.Downloaded)}  ↑ {ByteFormatter.FormatSize(today.Uploaded)}\nDouble-click to open usage"));
         }
+    }
+
+    /// <summary>Shows the speed in the tray icon, redrawing only when the picture would change.</summary>
+    private void UpdateTrayIcon(SpeedSample sample)
+    {
+        var mode = _settings.TrayIcon;
+        string key;
+        Icon next;
+        if (mode == TrayIconMode.Logo)
+        {
+            key = "logo";
+            if (key == _trayIconKey)
+            {
+                return;
+            }
+
+            next = _logoTrayIcon;
+        }
+        else
+        {
+            var download = mode == TrayIconMode.Download;
+            var (text, unitIndex) = ByteFormatter.FormatCompact(
+                download ? sample.DownloadBytesPerSecond : sample.UploadBytesPerSecond, _settings.Unit);
+            // The taskbar, not the widget theme, decides which colors are readable here.
+            var palette = WidgetPalette.For(ThemeMode.Auto);
+            var color = download ? palette.Download : palette.Upload;
+            key = $"{text}|{unitIndex}|{color.ToArgb()}";
+            if (key == _trayIconKey)
+            {
+                return;
+            }
+
+            next = TrayIconRenderer.Render(text, unitIndex, color);
+        }
+
+        _trayIconKey = key;
+        _tray.Icon = next;
+        if (_speedTrayIcon is not null)
+        {
+            TrayIconRenderer.Destroy(_speedTrayIcon);
+        }
+
+        _speedTrayIcon = ReferenceEquals(next, _logoTrayIcon) ? null : next;
     }
 
     private void OnHousekeeping()
@@ -292,14 +353,27 @@ internal sealed class NetPulseContext : ApplicationContext
 
     private void CheckDataPlan()
     {
-        var plan = _settings.Plan;
+        CheckPlan(_settings.Plan, _monitor.Ledger, networkLabel: null);
+        foreach (var (key, plan) in _settings.NetworkPlans)
+        {
+            if (_monitor.Networks.Get(key) is { } ledger)
+            {
+                var label = _monitor.Networks.Networks.FirstOrDefault(n => n.Key == key).Label;
+                CheckPlan(plan, ledger, label);
+            }
+        }
+    }
+
+    /// <summary>Shows a balloon when <paramref name="plan"/> reaches a new alert level; <paramref name="networkLabel"/> names a per-network plan.</summary>
+    private void CheckPlan(DataPlanSettings plan, UsageLedger ledger, string? networkLabel)
+    {
         if (!plan.Enabled)
         {
             return;
         }
 
         var today = DateOnly.FromDateTime(DateTime.Now);
-        var (cycle, status) = DataPlanCalculator.Evaluate(_monitor.Ledger, plan, today);
+        var (cycle, status) = DataPlanCalculator.Evaluate(ledger, plan, today);
         var alert = plan.TakePendingAlert(cycle, status);
         if (alert == PlanAlertLevel.None)
         {
@@ -308,13 +382,14 @@ internal sealed class NetPulseContext : ApplicationContext
 
         SaveSettings();
         var used = $"{ByteFormatter.FormatSize(status.UsedBytes)} / {ByteFormatter.FormatSize(status.LimitBytes)}";
+        var name = networkLabel is null ? string.Empty : $"{networkLabel}: ";
         if (alert == PlanAlertLevel.Exceeded)
         {
-            _tray.ShowBalloonTip(10_000, T("流量套餐已用完", "Data plan used up"), T($"本周期已使用 {used}。", $"Used {used} this cycle."), ToolTipIcon.Warning);
+            _tray.ShowBalloonTip(10_000, name + T("流量套餐已用完", "Data plan used up"), T($"本周期已使用 {used}。", $"Used {used} this cycle."), ToolTipIcon.Warning);
         }
         else
         {
-            _tray.ShowBalloonTip(10_000, T("流量套餐即将用完", "Data plan almost used up"), T($"本周期已使用 {used}（{status.Fraction:P0}）。", $"Used {used} this cycle ({status.Fraction:P0})."), ToolTipIcon.Info);
+            _tray.ShowBalloonTip(10_000, name + T("流量套餐即将用完", "Data plan almost used up"), T($"本周期已使用 {used}（{status.Fraction:P0}）。", $"Used {used} this cycle ({status.Fraction:P0})."), ToolTipIcon.Info);
         }
     }
 
@@ -326,7 +401,7 @@ internal sealed class NetPulseContext : ApplicationContext
             _settingsPage.SettingsChanged += (_, _) => ApplySettings(save: true);
             _mainWindow = new MainWindow(
             [
-                (MainTab.Usage, T("流量统计", "Usage"), new UsagePage(_monitor.Ledger, _settings, SaveUsage)),
+                (MainTab.Usage, T("流量统计", "Usage"), new UsagePage(_monitor.Ledger, _monitor.Networks, _settings, SaveUsage, SaveSettings)),
                 (MainTab.Graph, T("实时速度", "Live speed"), new SpeedGraphPage(_speedHistory, _settings)),
                 (MainTab.Processes, T("进程流量", "Programs"),new ProcessTrafficPage(_processTraffic, _settings, RestartElevated)),
                 (MainTab.Wifi, "Wi-Fi", new WifiPage()),
@@ -364,6 +439,7 @@ internal sealed class NetPulseContext : ApplicationContext
     {
         _settings.WidgetX = _widget.Left;
         _settings.WidgetY = _widget.Top;
+        _settings.Placement = _widget.CapturePlacement();
         SaveSettings();
     }
 
@@ -386,6 +462,21 @@ internal sealed class NetPulseContext : ApplicationContext
         var keepFrom = DateOnly.FromDateTime(DateTime.Now).AddDays(-_settings.UsageRetentionDays);
         var ledger = _monitor.Ledger;
         ledger.Prune(keepFrom);
+        var networks = _monitor.Networks;
+        networks.Prune(keepFrom);
+        if (networks.IsDirty)
+        {
+            try
+            {
+                _networkUsageStore.Save(networks.ToDocument());
+                networks.MarkSaved();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                ErrorLog.Write(ex, "SaveNetworkUsage");
+            }
+        }
+
         if (ledger.IsDirty)
         {
             try
@@ -418,10 +509,13 @@ internal sealed class NetPulseContext : ApplicationContext
 
     private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
     {
-        if (_settings.Theme == ThemeMode.Auto
-            && e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color)
+        if (e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color)
         {
-            _widget.ApplySettings(_settings);
+            _trayIconKey = null; // the taskbar may have changed between light and dark
+            if (_settings.Theme == ThemeMode.Auto)
+            {
+                _widget.ApplySettings(_settings);
+            }
         }
     }
 

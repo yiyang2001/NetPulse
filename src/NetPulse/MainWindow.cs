@@ -46,6 +46,7 @@ internal sealed class MainWindow : Form
         }
 
         Controls.Add(_tabs);
+        Ui.ApplyDarkControlStyles(this);
         _tabs.SelectedIndexChanged += (_, _) => UpdateActivePage();
     }
 

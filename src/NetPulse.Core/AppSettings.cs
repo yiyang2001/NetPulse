@@ -7,6 +7,26 @@ public enum ThemeMode
     Light,
 }
 
+public enum WidgetLayout
+{
+    /// <summary>Download above upload.</summary>
+    TwoLines,
+
+    /// <summary>Download and upload side by side.</summary>
+    OneLine,
+
+    /// <summary>Download plus upload as a single number.</summary>
+    TotalOnly,
+}
+
+/// <summary>What the tray icon shows.</summary>
+public enum TrayIconMode
+{
+    Logo,
+    Download,
+    Upload,
+}
+
 public sealed class AppSettings
 {
     public SpeedUnit Unit { get; set; } = SpeedUnit.Bytes;
@@ -44,13 +64,27 @@ public sealed class AppSettings
     /// <summary>Main window colors; Auto follows the Windows app mode. Applied at start-up.</summary>
     public ThemeMode WindowTheme { get; set; } = ThemeMode.Auto;
 
+    public WidgetLayout Layout { get; set; } = WidgetLayout.TwoLines;
+
+    /// <summary>Small graph of the last minute next to the speeds.</summary>
+    public bool ShowMiniGraph { get; set; }
+
+    public TrayIconMode TrayIcon { get; set; } = TrayIconMode.Logo;
+
+    /// <summary>Last absolute position; used only by files written before <see cref="Placement"/> existed.</summary>
     public int? WidgetX { get; set; }
 
     public int? WidgetY { get; set; }
 
+    /// <summary>Position relative to the screen it is on, so it survives resolution, scaling and monitor changes.</summary>
+    public WidgetPlacement? Placement { get; set; }
+
     public int UsageRetentionDays { get; set; } = 400;
 
     public DataPlanSettings Plan { get; set; } = new();
+
+    /// <summary>Own plans for single networks (e.g. a phone hotspot), by <see cref="NetworkIdentity.Key"/>; checked on top of <see cref="Plan"/>.</summary>
+    public Dictionary<string, DataPlanSettings> NetworkPlans { get; set; } = [];
 
     /// <summary>Clamps values edited by hand or written by older versions into supported ranges.</summary>
     public AppSettings Normalize()
@@ -69,6 +103,21 @@ public sealed class AppSettings
             Language = UiLanguage.Auto;
         }
 
+        if (!Enum.IsDefined(Layout))
+        {
+            Layout = WidgetLayout.TwoLines;
+        }
+
+        if (!Enum.IsDefined(TrayIcon))
+        {
+            TrayIcon = TrayIconMode.Logo;
+        }
+
+        if (Placement is not null && !Placement.IsValid)
+        {
+            Placement = null;
+        }
+
         if (!Enum.IsDefined(WindowTheme))
         {
             WindowTheme = ThemeMode.Auto;
@@ -81,6 +130,14 @@ public sealed class AppSettings
 
         Plan ??= new DataPlanSettings();
         Plan.Normalize();
+        NetworkPlans = (NetworkPlans ?? [])
+            .Where(p => p.Value is not null)
+            .ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);
+        foreach (var plan in NetworkPlans.Values)
+        {
+            plan.Normalize();
+        }
+
         return this;
     }
 }
