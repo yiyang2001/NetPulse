@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Company>NetPulse</Company>
     <Product>NetPulse</Product>
     <Copyright>NetPulse contributors</Copyright>

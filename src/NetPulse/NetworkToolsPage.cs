@@ -18,6 +18,8 @@ internal sealed class NetworkToolsPage : UserControl
         tabs.TabPages.Add(Wrap("Ping", new PingTool()));
         tabs.TabPages.Add(Wrap(T("路由追踪", "Traceroute"), new TraceRouteTool()));
         tabs.TabPages.Add(Wrap(T("DNS 查询", "DNS lookup"), new DnsTool()));
+        tabs.TabPages.Add(Wrap(T("端口检测", "Port check"), new PortTool()));
+        tabs.TabPages.Add(Wrap(T("局域网设备", "LAN devices"), new LanDevicesTool()));
         tabs.TabPages.Add(Wrap(T("本机网络", "This PC"), new LocalNetworkTool()));
         Controls.Add(tabs);
     }

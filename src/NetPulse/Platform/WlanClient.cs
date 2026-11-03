@@ -28,6 +28,7 @@ internal sealed unsafe class WlanClient : IDisposable
 
     private const uint ERROR_SUCCESS = 0;
     private const uint WLAN_PROFILE_GET_PLAINTEXT_KEY = 4;
+    private const uint BssTypeAny = 3; // dot11_BSS_type_any
     private const int OpcodeCurrentConnection = 7;
     private const int OpcodeChannelNumber = 8;
     private const int OpcodeRssi = 0x10000102;
@@ -108,6 +109,46 @@ internal sealed unsafe class WlanClient : IDisposable
         finally
         {
             WlanFreeMemory(data);
+        }
+    }
+
+    /// <summary>
+    /// Asks the adapter to scan. It returns at once; the results show up in <see cref="GetAccessPoints"/> after a few
+    /// seconds. Windows throttles scans, so a refused request is not an error: the cached list is still read.
+    /// </summary>
+    public void RequestScan(Guid interfaceId) => _ = WlanScan(_handle, &interfaceId, 0, 0, 0);
+
+    /// <summary>Every access point in the adapter's latest scan result, strongest first.</summary>
+    /// <param name="connectedBssid">BSSID of the current connection, to mark it.</param>
+    public IReadOnlyList<WifiAccessPoint> GetAccessPoints(Guid interfaceId, string? connectedBssid)
+    {
+        Check(WlanGetNetworkBssList(_handle, &interfaceId, 0, BssTypeAny, 0, 0, out var list), "WlanGetNetworkBssList");
+        try
+        {
+            var result = new List<WifiAccessPoint>();
+            var count = *(uint*)((byte*)list + 4);
+            var entries = (WlanBssEntryNative*)((byte*)list + 8);
+            for (var i = 0; i < count; i++)
+            {
+                var entry = entries[i];
+                var ssidLength = (int)Math.Min(32, entry.SsidLength);
+                var ssid = Encoding.UTF8.GetString(new ReadOnlySpan<byte>(entry.Ssid, ssidLength));
+                var bssid = string.Join(':', new ReadOnlySpan<byte>(entry.Bssid, 6).ToArray().Select(b => b.ToString("X2")));
+                result.Add(new WifiAccessPoint(
+                    ssid,
+                    bssid,
+                    entry.Rssi,
+                    entry.LinkQuality,
+                    (int)(entry.ChCenterFrequency / 1000),
+                    PhyName(entry.BssPhyType),
+                    string.Equals(bssid, connectedBssid, StringComparison.OrdinalIgnoreCase)));
+            }
+
+            return [.. result.OrderByDescending(a => a.RssiDbm)];
+        }
+        finally
+        {
+            WlanFreeMemory(list);
         }
     }
 
@@ -246,6 +287,13 @@ internal sealed unsafe class WlanClient : IDisposable
         nint clientHandle, Guid* interfaceGuid, int opcode, nint reserved, out uint dataSize, out void* data, out int valueType);
 
     [DllImport("wlanapi.dll")]
+    private static extern uint WlanScan(nint clientHandle, Guid* interfaceGuid, nint ssid, nint informationElements, nint reserved);
+
+    [DllImport("wlanapi.dll")]
+    private static extern uint WlanGetNetworkBssList(
+        nint clientHandle, Guid* interfaceGuid, nint ssid, uint bssType, int securityEnabled, nint reserved, out void* bssList);
+
+    [DllImport("wlanapi.dll")]
     private static extern uint WlanGetProfileList(nint clientHandle, Guid* interfaceGuid, nint reserved, out void* profileList);
 
     [DllImport("wlanapi.dll", CharSet = CharSet.Unicode)]
@@ -258,6 +306,30 @@ internal sealed unsafe class WlanClient : IDisposable
         public Guid InterfaceGuid;
         public fixed char Description[256];
         public uint State;
+    }
+
+    /// <summary>WLAN_BSS_ENTRY; the natural alignment of these fields gives the 360-byte layout of the C struct.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WlanBssEntryNative
+    {
+        public uint SsidLength;
+        public fixed byte Ssid[32];
+        public uint PhyId;
+        public fixed byte Bssid[6];
+        public uint BssType;
+        public uint BssPhyType;
+        public int Rssi;
+        public uint LinkQuality;
+        public byte InRegDomain;
+        public ushort BeaconPeriod;
+        public ulong Timestamp;
+        public ulong HostTimestamp;
+        public ushort CapabilityInformation;
+        public uint ChCenterFrequency; // kHz
+        public uint RateSetLength;
+        public fixed ushort RateSet[126];
+        public uint IeOffset;
+        public uint IeSize;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

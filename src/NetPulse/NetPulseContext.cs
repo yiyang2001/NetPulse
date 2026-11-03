@@ -44,6 +44,8 @@ internal sealed class NetPulseContext : ApplicationContext
     private readonly SpeedHistory _speedHistory = new(TimeSpan.FromMinutes(10));
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     private bool _importing; // a restored backup is on disk; the in-memory state must not overwrite it
+    private readonly SpeedTestService _speedTests = new();
+    private readonly CancellationTokenSource _speedTestCancel = new();
     private readonly ProgramLimitTracker _programLimits = new();
     private SustainedSpeedDetector? _speedDetector;
     private (SpeedAlertDirection, long, int)? _speedDetectorKey;
@@ -315,6 +317,35 @@ internal sealed class NetPulseContext : ApplicationContext
         }
     }
 
+    /// <summary>Starts the scheduled speed test when it is due; waits while a full-screen app runs or another test is going.</summary>
+    private void CheckSpeedTestSchedule()
+    {
+        var schedule = _settings.SpeedTestSchedule;
+        if (_exiting || _speedTests.IsBusy || !schedule.IsDue(DateTime.Now) || NativeMethods.IsFullscreenAppActive())
+        {
+            return;
+        }
+
+        schedule.LastRun = DateTime.Now; // also when the test fails: a missing connection is not retried every two seconds
+        SaveSettings();
+        _ = RunScheduledSpeedTestAsync();
+    }
+
+    private async Task RunScheduledSpeedTestAsync()
+    {
+        try
+        {
+            await _speedTests.RunAsync(null, _speedTestCancel.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Write(ex, "ScheduledSpeedTest"); // nobody awaits this task, so it must not escape
+        }
+    }
+
     private void CheckProgramAlert()
     {
         var alert = _settings.ProgramAlert;
@@ -412,6 +443,7 @@ internal sealed class NetPulseContext : ApplicationContext
         _widget.BringToTopIfTopMost();
         _processTraffic.RecordHistory();
         CheckProgramAlert();
+        CheckSpeedTestSchedule();
 
         if (DateTime.UtcNow - _lastSave >= SaveInterval)
         {
@@ -489,8 +521,8 @@ internal sealed class NetPulseContext : ApplicationContext
                 (MainTab.Usage, T("流量统计", "Usage"), new UsagePage(_monitor.Ledger, _monitor.Networks, _settings, SaveUsage, SaveSettings)),
                 (MainTab.Graph, T("实时速度", "Live speed"), new SpeedGraphPage(_speedHistory, _settings)),
                 (MainTab.Processes, T("进程流量", "Programs"),new ProcessTrafficPage(_processTraffic, _settings, RestartElevated)),
-                (MainTab.Wifi, "Wi-Fi", new WifiPage()),
-                (MainTab.SpeedTest, T("测速", "Speed test"), new SpeedTestPage()),
+                (MainTab.Wifi, "Wi-Fi", new WifiHostPage()),
+                (MainTab.SpeedTest, T("测速", "Speed test"), new SpeedTestPage(_speedTests, _settings, SaveSettings)),
                 (MainTab.Tools, T("网络工具", "Network tools"), new NetworkToolsPage()),
                 (MainTab.Settings, T("设置", "Settings"), _settingsPage),
             ],
@@ -662,6 +694,7 @@ internal sealed class NetPulseContext : ApplicationContext
     private void Exit()
     {
         _exiting = true;
+        _speedTestCancel.Cancel();
         _sampleTimer.Stop();
         _housekeepingTimer.Stop();
         SaveUsage();

@@ -87,6 +87,8 @@ public sealed class AppSettings
 
     public ProgramAlertSettings ProgramAlert { get; set; } = new();
 
+    public SpeedTestSchedule SpeedTestSchedule { get; set; } = new();
+
     /// <summary>Notification on Monday with last week's traffic.</summary>
     public bool WeeklySummary { get; set; } = true;
 
@@ -144,6 +146,8 @@ public sealed class AppSettings
         SpeedAlert.Normalize();
         ProgramAlert ??= new ProgramAlertSettings();
         ProgramAlert.Normalize();
+        SpeedTestSchedule ??= new SpeedTestSchedule();
+        SpeedTestSchedule.Normalize();
         NetworkPlans = (NetworkPlans ?? [])
             .Where(p => p.Value is not null)
             .ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);

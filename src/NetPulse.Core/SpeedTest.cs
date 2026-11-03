@@ -24,7 +24,35 @@ public sealed record SpeedTestResult(
 /// <summary>On-disk history of past results.</summary>
 public sealed class SpeedTestHistory
 {
+    public const int MaxResults = 200;
+
+    /// <summary>Newest first.</summary>
     public List<SpeedTestResult> Results { get; set; } = [];
+
+    public void Add(SpeedTestResult result)
+    {
+        Results.Insert(0, result);
+        if (Results.Count > MaxResults)
+        {
+            Results.RemoveRange(MaxResults, Results.Count - MaxResults);
+        }
+    }
+}
+
+/// <summary>Optional repeated speed test. Off by default: every run uses tens to hundreds of MB.</summary>
+public sealed class SpeedTestSchedule
+{
+    public bool Enabled { get; set; }
+
+    public int IntervalHours { get; set; } = 24;
+
+    /// <summary>When the last scheduled test was started (also if it failed, so a broken connection is not retried every few seconds).</summary>
+    public DateTime? LastRun { get; set; }
+
+    public bool IsDue(DateTime now) =>
+        Enabled && (LastRun is not { } last || now - last >= TimeSpan.FromHours(IntervalHours) || last > now);
+
+    public void Normalize() => IntervalHours = Math.Clamp(IntervalHours, 1, 24 * 7);
 }
 
 /// <summary>
