@@ -9,7 +9,7 @@ namespace NetPulse;
 /// Owns the app's lifetime: tray icon, widget, sampling timer, persistence and data-plan alerts.
 /// Everything runs on the UI thread, so the ledger and settings need no locking.
 /// </summary>
-internal sealed class NetPulseContext : ApplicationContext
+internal sealed partial class NetPulseContext : ApplicationContext
 {
     private static readonly TimeSpan SaveInterval = TimeSpan.FromMinutes(1);
 
@@ -54,6 +54,7 @@ internal sealed class NetPulseContext : ApplicationContext
     private readonly Icon _logoTrayIcon;
     private Icon? _speedTrayIcon;
     private string? _trayIconKey;
+    private string? _trayText;
     private MainWindow? _mainWindow;
     private SettingsPage? _settingsPage;
     private volatile bool _exiting; // also read by the show-window callback on a pool thread
@@ -289,7 +290,12 @@ internal sealed class NetPulseContext : ApplicationContext
         // NotifyIcon.Text is limited to 127 characters and updating it is relatively costly.
         var down = ByteFormatter.FormatSpeed(sample.DownloadBytesPerSecond, _settings.Unit);
         var up = ByteFormatter.FormatSpeed(sample.UploadBytesPerSecond, _settings.Unit);
-        _tray.Text = $"{AppPaths.AppName}\n↓ {down}   ↑ {up}";
+        var trayText = $"{AppPaths.AppName}\n↓ {down}   ↑ {up}";
+        if (trayText != _trayText)
+        {
+            _trayText = trayText;
+            _tray.Text = trayText;
+        }
 
         if (DateTime.UtcNow - _lastToolTip > TimeSpan.FromSeconds(5))
         {
@@ -298,168 +304,6 @@ internal sealed class NetPulseContext : ApplicationContext
             _widget.SetToolTipText(
                 T($"今天：↓ {ByteFormatter.FormatSize(today.Downloaded)}  ↑ {ByteFormatter.FormatSize(today.Uploaded)}\n双击打开流量统计", $"Today: ↓ {ByteFormatter.FormatSize(today.Downloaded)}  ↑ {ByteFormatter.FormatSize(today.Uploaded)}\nDouble-click to open usage"));
         }
-    }
-
-    private void CheckSpeedAlert(SpeedSample sample)
-    {
-        var alert = _settings.SpeedAlert;
-        if (!alert.Enabled)
-        {
-            _speedDetector = null;
-            _speedDetectorKey = null;
-            return;
-        }
-
-        var key = (alert.Direction, alert.ThresholdBytesPerSecond, alert.Minutes);
-        if (_speedDetector is null || _speedDetectorKey != key)
-        {
-            _speedDetector = new SustainedSpeedDetector(alert.ThresholdBytesPerSecond, TimeSpan.FromMinutes(alert.Minutes));
-            _speedDetectorKey = key;
-        }
-
-        var upload = alert.Direction == SpeedAlertDirection.Upload;
-        if (_speedDetector.Feed(_clock.Elapsed, upload ? sample.UploadBytesPerSecond : sample.DownloadBytesPerSecond))
-        {
-            var limit = ByteFormatter.FormatSpeed(alert.ThresholdBytesPerSecond, _settings.Unit);
-            var now = ByteFormatter.FormatSpeed(upload ? sample.UploadBytesPerSecond : sample.DownloadBytesPerSecond, _settings.Unit);
-            ShowBalloon(
-                10_000,
-                upload ? T("上传速度持续偏高", "Upload speed stays high") : T("下载速度持续偏高", "Download speed stays high"),
-                T($"已连续 {alert.Minutes} 分钟超过 {limit}，当前 {now}。可在“进程流量”中查看是哪个程序。", $"Above {limit} for {alert.Minutes} minutes, now {now}. Check the Programs tab to see which program."),
-                ToolTipIcon.Warning);
-        }
-    }
-
-    /// <summary>Starts the scheduled speed test when it is due; waits while a full-screen app runs or another test is going.</summary>
-    private void CheckSpeedTestSchedule()
-    {
-        var schedule = _settings.SpeedTestSchedule;
-        if (_exiting || _speedTests.IsBusy || !schedule.IsDue(DateTime.Now) || NativeMethods.IsFullscreenAppActive())
-        {
-            return;
-        }
-
-        schedule.LastRun = DateTime.Now; // also when the test fails: a missing connection is not retried every two seconds
-        SaveSettings();
-        _ = RunScheduledSpeedTestAsync();
-    }
-
-    private async Task RunScheduledSpeedTestAsync()
-    {
-        try
-        {
-            await _speedTests.RunAsync(null, _speedTestCancel.Token);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            ErrorLog.Write(ex, "ScheduledSpeedTest"); // nobody awaits this task, so it must not escape
-        }
-    }
-
-    /// <summary>Once a day while the user has the update check on; only tells, never downloads.</summary>
-    private void CheckForUpdates()
-    {
-        var check = _settings.UpdateCheck;
-        if (_exiting || !UpdateService.IsConfigured || _updates.IsBusy || !check.IsDue(DateTime.Now))
-        {
-            return;
-        }
-
-        check.LastCheck = DateTime.Now; // also on failure: offline PCs are not asked again every two seconds
-        SaveSettings();
-        _ = CheckForUpdatesAsync();
-    }
-
-    private async Task CheckForUpdatesAsync()
-    {
-        try
-        {
-            var release = await _updates.GetLatestAsync(_speedTestCancel.Token);
-            if (release is null || !UpdateFeed.IsNewer(release, UpdateService.CurrentVersion) || _exiting)
-            {
-                return;
-            }
-
-            var version = release.Version.ToString();
-            if (_settings.UpdateCheck.NotifiedVersion == version)
-            {
-                return; // announced once; the settings page still shows it
-            }
-
-            _settings.UpdateCheck.NotifiedVersion = version;
-            SaveSettings();
-            ShowBalloon(
-                10_000,
-                T($"NetPulse {version} 已发布", $"NetPulse {version} is available"),
-                T($"当前是 {UpdateService.CurrentVersion}。点击这里打开下载页面。", $"You have {UpdateService.CurrentVersion}. Click here to open the download page."),
-                ToolTipIcon.Info,
-                release.Page);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
-        {
-            // Offline or GitHub unreachable: try again tomorrow, no need to bother the user.
-        }
-        catch (Exception ex)
-        {
-            ErrorLog.Write(ex, "UpdateCheck"); // nobody awaits this task, so it must not escape
-        }
-    }
-
-    private void ShowBalloon(int timeout, string title, string text, ToolTipIcon icon, Uri? link = null)
-    {
-        _balloonLink = link;
-        _tray.ShowBalloonTip(timeout, title, text, icon);
-    }
-
-    private void CheckProgramAlert()
-    {
-        var alert = _settings.ProgramAlert;
-        if (!alert.Enabled || !_processTraffic.IsRunning)
-        {
-            return;
-        }
-
-        var over = _programLimits.NewlyOver(_processTraffic.History, DateOnly.FromDateTime(DateTime.Now), alert.LimitBytes);
-        if (over.Count == 0)
-        {
-            return;
-        }
-
-        var names = string.Join(", ", over.Take(3).Select(a => $"{a.Name} ({ByteFormatter.FormatSize(a.Total)})"))
-            + (over.Count > 3 ? T($" 等 {over.Count} 个程序", $" and {over.Count - 3} more") : string.Empty);
-        ShowBalloon(
-            10_000,
-            T("程序今日流量超出设定", "Program over its daily limit"),
-            T($"超过 {ByteFormatter.FormatSize(alert.LimitBytes)}：{names}", $"Over {ByteFormatter.FormatSize(alert.LimitBytes)}: {names}"),
-            ToolTipIcon.Warning);
-    }
-
-    private void CheckWeeklySummary()
-    {
-        if (!_settings.WeeklySummary)
-        {
-            return;
-        }
-
-        var today = DateOnly.FromDateTime(DateTime.Now);
-        if (WeeklySummary.DueOn(_monitor.Ledger, today, _settings.WeeklySummaryShownFor) is not { } summary)
-        {
-            return;
-        }
-
-        _settings.WeeklySummaryShownFor = WeeklySummary.MondayOf(today);
-        SaveSettings();
-        var change = summary.PreviousWeek.Total > 0
-            ? T($"，比前一周{((double)summary.Week.Total / summary.PreviousWeek.Total) - 1:+0%;-0%;±0%}", $", {((double)summary.Week.Total / summary.PreviousWeek.Total) - 1:+0%;-0%;±0%} vs the week before")
-            : string.Empty;
-        ShowBalloon(
-            10_000,
-            T($"上周流量（{summary.From:M/d} – {summary.To:M/d}）", $"Last week ({summary.From:M/d} – {summary.To:M/d})"),
-            T($"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}，合计 {ByteFormatter.FormatSize(summary.Week.Total)}{change}", $"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}, {ByteFormatter.FormatSize(summary.Week.Total)} in total{change}"),
-            ToolTipIcon.Info);
     }
 
     /// <summary>Shows the speed in the tray icon, redrawing only when the picture would change.</summary>
@@ -537,48 +381,6 @@ internal sealed class NetPulseContext : ApplicationContext
         }
     }
 
-    private void CheckDataPlan()
-    {
-        CheckPlan(_settings.Plan, _monitor.Ledger, networkLabel: null);
-        foreach (var (key, plan) in _settings.NetworkPlans)
-        {
-            if (_monitor.Networks.Get(key) is { } ledger)
-            {
-                var label = _monitor.Networks.Networks.FirstOrDefault(n => n.Key == key).Label;
-                CheckPlan(plan, ledger, label);
-            }
-        }
-    }
-
-    /// <summary>Shows a balloon when <paramref name="plan"/> reaches a new alert level; <paramref name="networkLabel"/> names a per-network plan.</summary>
-    private void CheckPlan(DataPlanSettings plan, UsageLedger ledger, string? networkLabel)
-    {
-        if (!plan.Enabled)
-        {
-            return;
-        }
-
-        var today = DateOnly.FromDateTime(DateTime.Now);
-        var (cycle, status) = DataPlanCalculator.Evaluate(ledger, plan, today);
-        var alert = plan.TakePendingAlert(cycle, status);
-        if (alert == PlanAlertLevel.None)
-        {
-            return;
-        }
-
-        SaveSettings();
-        var used = $"{ByteFormatter.FormatSize(status.UsedBytes)} / {ByteFormatter.FormatSize(status.LimitBytes)}";
-        var name = networkLabel is null ? string.Empty : $"{networkLabel}: ";
-        if (alert == PlanAlertLevel.Exceeded)
-        {
-            ShowBalloon(10_000, name + T("流量套餐已用完", "Data plan used up"), T($"本周期已使用 {used}。", $"Used {used} this cycle."), ToolTipIcon.Warning);
-        }
-        else
-        {
-            ShowBalloon(10_000, name + T("流量套餐即将用完", "Data plan almost used up"), T($"本周期已使用 {used}（{status.Fraction:P0}）。", $"Used {used} this cycle ({status.Fraction:P0})."), ToolTipIcon.Info);
-        }
-    }
-
     private void ShowMainWindow(MainTab tab)
     {
         if (_mainWindow is null || _mainWindow.IsDisposed)
@@ -619,158 +421,6 @@ internal sealed class NetPulseContext : ApplicationContext
 
         Exit();
         return true;
-    }
-
-    private void ExportBackup(string path)
-    {
-        SaveUsage();
-        SaveSettings();
-        BackupDocument.Write(path, new BackupDocument
-        {
-            AppVersion = ElevatedAutostart.CurrentVersion,
-            Settings = _settings,
-            Usage = new UsageDocument { Days = [.. _monitor.Ledger.ToList()] },
-            NetworkUsage = _monitor.Networks.ToDocument(),
-            ProcessUsage = _processTraffic.History.ToDocument(),
-        });
-    }
-
-    /// <summary>Replaces the files on disk with the backup's and restarts; nothing is kept in memory, so nothing overwrites them on exit.</summary>
-    private void ImportBackup(string path)
-    {
-        var backup = BackupDocument.Read(path);
-        SettingsStore.Save(backup.Settings);
-        _usageStore.Save(backup.Usage);
-        _networkUsageStore.Save(backup.NetworkUsage);
-        _processUsageStore.Save(backup.ProcessUsage);
-
-        _importing = true;
-        try
-        {
-            // A plain child keeps this process's rights, so an elevated NetPulse restarts elevated without a prompt.
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = Environment.ProcessPath ?? Application.ExecutablePath,
-                Arguments = $"{Program.RestartedArgument} {Program.OpenArgumentPrefix}{MainTab.Settings}{AppPaths.ProfileArgument}",
-            })?.Dispose();
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            _importing = false;
-            ErrorLog.Write(ex, "ImportBackup restart");
-            throw new IOException(T("已恢复数据，但无法自动重启，请手动重启 NetPulse。", "The data was restored, but NetPulse could not restart by itself. Please start it again."), ex);
-        }
-
-        Exit();
-    }
-
-    /// <summary>
-    /// Copies this build into the per-user install folder and hands over to that copy. Throws (and keeps
-    /// running) when the copy fails; the new process waits for this one's instance lock.
-    /// </summary>
-    private void InstallAndRestart()
-    {
-        SaveUsage();
-        SaveSettings();
-        UserInstall.Install();
-        UserInstall.StartInstalledCopy($"{Program.RestartedArgument} {Program.OpenArgumentPrefix}{MainTab.Settings}");
-        Exit();
-    }
-
-    /// <summary>Starts the uninstaller, which waits for this instance to exit before it removes anything.</summary>
-    private void UninstallAndExit()
-    {
-        SaveUsage();
-        SaveSettings();
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = Environment.ProcessPath ?? Application.ExecutablePath,
-            Arguments = $"{InstallLayout.UninstallArgument} {Program.RestartedArgument}{AppPaths.ProfileArgument}",
-            WorkingDirectory = Path.GetTempPath(), // not the install folder, which is about to be deleted
-        })?.Dispose();
-        Exit();
-    }
-
-    private void SaveWidgetPosition()
-    {
-        _settings.WidgetX = _widget.Left;
-        _settings.WidgetY = _widget.Top;
-        _settings.Placement = _widget.CapturePlacement();
-        SaveSettings();
-    }
-
-    private void SaveSettings()
-    {
-        if (_importing)
-        {
-            return;
-        }
-
-        try
-        {
-            SettingsStore.Save(_settings);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            ErrorLog.Write(ex, "SaveSettings");
-        }
-    }
-
-    /// <summary>Saves the daily totals and the per-program history, whichever changed.</summary>
-    private void SaveUsage()
-    {
-        if (_importing)
-        {
-            return;
-        }
-
-        _lastSave = DateTime.UtcNow;
-        var keepFrom = DateOnly.FromDateTime(DateTime.Now).AddDays(-_settings.UsageRetentionDays);
-        var ledger = _monitor.Ledger;
-        ledger.Prune(keepFrom);
-        var networks = _monitor.Networks;
-        networks.Prune(keepFrom);
-        if (networks.IsDirty)
-        {
-            try
-            {
-                _networkUsageStore.Save(networks.ToDocument());
-                networks.MarkSaved();
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                ErrorLog.Write(ex, "SaveNetworkUsage");
-            }
-        }
-
-        if (ledger.IsDirty)
-        {
-            try
-            {
-                _usageStore.Save(new UsageDocument { Days = [.. ledger.ToList()] });
-                ledger.MarkSaved();
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                ErrorLog.Write(ex, "SaveUsage");
-            }
-        }
-
-        _processTraffic.RecordHistory();
-        var history = _processTraffic.History;
-        history.Prune(keepFrom);
-        if (history.IsDirty)
-        {
-            try
-            {
-                _processUsageStore.Save(history.ToDocument());
-                history.MarkSaved();
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                ErrorLog.Write(ex, "SaveProcessUsage");
-            }
-        }
     }
 
     private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)

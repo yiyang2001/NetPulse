@@ -2,7 +2,7 @@
 
 轻量的 Windows 网速悬浮窗、流量统计和网络工具箱。所有功能免费，不收集数据，没有广告。
 
-## 下载与安装（v0.7）
+## 下载与安装
 
 每个版本有两个 exe，任选一个：
 
@@ -19,7 +19,7 @@
 - 每个版本都附带 `SHA256SUMS.txt`，可以用 `Get-FileHash` 核对下载的文件。
 - **SmartScreen**：exe 没有代码签名，第一次运行时 Windows 可能提示“Windows 已保护你的电脑”。核对校验值后，可以点击“更多信息 → 仍要运行”。
 
-## 功能（v0.8）
+## 功能（v0.9）
 
 ### 网速与流量
 
@@ -168,11 +168,11 @@ dotnet run --project src/NetPulse
 代码推送到 GitHub 后：
 
 - **CI**（`.github/workflows/ci.yml`）：每次推送到 `main` 和每个 Pull Request 都会在 Windows 上构建并运行全部测试。
-- **发布**（`.github/workflows/release.yml`）：推送 `v0.8.0` 这样的标签时，先检查标签和 `Directory.Build.props` 中的版本号一致，再构建 x64 和 ARM64 的四个 exe 及校验文件，并创建一个**草稿** Release。构建出的程序会自动以当前仓库作为更新来源。检查草稿后点击“Publish release”才算正式发布，开启了更新检查的用户这时才会收到提醒。
+- **发布**（`.github/workflows/release.yml`）：推送 `v0.9.0` 这样的标签时，先检查标签和 `Directory.Build.props` 中的版本号一致，再构建 x64 和 ARM64 的四个 exe 及校验文件，并创建一个**草稿** Release。构建出的程序会自动以当前仓库作为更新来源。检查草稿后点击“Publish release”才算正式发布，开启了更新检查的用户这时才会收到提醒。
 
 ```powershell
-git tag v0.8.0
-git push origin v0.8.0
+git tag v0.9.0
+git push origin v0.9.0
 ```
 
 开发测试时，可以设置环境变量 `NETPULSE_PROFILE=dev`，或者加参数 `--profile=dev`。测试版会使用独立的数据文件夹（`%LOCALAPPDATA%\NetPulse-dev`）、独立的单实例锁和独立的开机启动项，可以和日常使用的版本同时运行。

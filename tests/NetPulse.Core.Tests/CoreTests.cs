@@ -211,6 +211,20 @@ public class NetworkAdapterTests
         Assert.Equal(expected, NetworkAdapters.IsVirtual(name, description));
 
     [Fact]
+    public void VirtualCheckStaysCorrectWhenCachedAndPastTheCacheLimit()
+    {
+        for (var i = 0; i < 700; i++)
+        {
+            Assert.False(NetworkAdapters.IsVirtual($"Ethernet {i}", "Intel Ethernet"));
+            Assert.True(NetworkAdapters.IsVirtual($"vEthernet {i}", "Hyper-V Virtual Ethernet Adapter"));
+        }
+
+        // Repeated lookups return the same answer.
+        Assert.True(NetworkAdapters.IsVirtual("vEthernet 0", "Hyper-V Virtual Ethernet Adapter"));
+        Assert.False(NetworkAdapters.IsVirtual("Ethernet 0", "Intel Ethernet"));
+    }
+
+    [Fact]
     public void SelectsSpecificAdapterOrFallsBackToAll()
     {
         var adapters = new[] { Adapter("eth", false), Adapter("wifi", false), Adapter("hyperv", true) };

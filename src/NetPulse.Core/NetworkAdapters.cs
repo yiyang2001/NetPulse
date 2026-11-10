@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.NetworkInformation;
 
 namespace NetPulse.Core;
@@ -64,7 +65,14 @@ public static class NetworkAdapters
         return result;
     }
 
-    public static bool IsVirtual(string name, string description)
+    // Adapter names almost never change, but ReadAll runs every sampling tick.
+    private static readonly ConcurrentDictionary<(string, string), bool> VirtualCache = new();
+
+    public static bool IsVirtual(string name, string description) =>
+        VirtualCache.Count > 512 ? ComputeIsVirtual(name, description)
+            : VirtualCache.GetOrAdd((name, description), static k => ComputeIsVirtual(k.Item1, k.Item2));
+
+    private static bool ComputeIsVirtual(string name, string description)
     {
         foreach (var marker in VirtualMarkers)
         {
