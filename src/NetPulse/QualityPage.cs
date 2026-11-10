@@ -16,8 +16,9 @@ internal sealed class QualityPage : UserControl, IActivatablePage
     private readonly AppSettings _settings;
     private readonly Action _saveUsage;
     private readonly Panel _offPanel = new() { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 0, 0, 8) };
-    private readonly ComboBox _network = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
-    private readonly ComboBox _range = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+    private readonly ComboBox _network = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
+    private readonly ComboBox _range = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
+    private readonly ComboBox _span = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 100 };
     private readonly Label _nowTitle = TitleLabel(T("当前", "Now"));
     private readonly Label _nowValue = ValueLabel();
     private readonly Label _todayValue = ValueLabel();
@@ -74,8 +75,8 @@ internal sealed class QualityPage : UserControl, IActivatablePage
         var timelinePanel = new Panel { Dock = DockStyle.Top, Height = 130, Padding = new Padding(0, 4, 0, 4) };
         timelinePanel.Controls.Add(_timeline);
         var legend = Ui.Note(T(
-            "最近 24 小时：绿 正常 · 橙 延迟高 · 黄 丢包 · 红 本地问题 · 紫 外网问题 · 青 DNS 问题 · 灰 未连接。曲线：绿 网关，蓝 外网，灰色虚线 Wi-Fi 信号（0–100%）。",
-            "Last 24 h: green OK · orange slow · yellow loss · red local · purple internet · cyan DNS · gray offline. Lines: green gateway, blue internet, dashed gray Wi-Fi signal (0–100%)."));
+            "时间线：绿 正常 · 橙 延迟高 · 黄 丢包 · 红 本地问题 · 紫 外网问题 · 青 DNS 问题 · 灰 未连接。曲线：绿 网关，蓝 外网，灰色虚线 Wi-Fi 信号（0–100%）。",
+            "Timeline: green OK · orange slow · yellow loss · red local · purple internet · cyan DNS · gray offline. Lines: green gateway, blue internet, dashed gray Wi-Fi signal (0–100%)."));
         var dailyPanel = new Panel { Dock = DockStyle.Top, Height = 96, Padding = new Padding(0, 4, 0, 8) };
         dailyPanel.Controls.Add(_daily);
 
@@ -109,7 +110,13 @@ internal sealed class QualityPage : UserControl, IActivatablePage
                 RefreshData();
             }
         };
-        var toolbar = Ui.Toolbar(new Label { Text = T("网络", "Network") }, _network, new Label { Text = T("范围", "Range") }, _range);
+        _span.Items.AddRange([T("1 小时", "1 hour"), T("6 小时", "6 hours"), T("24 小时", "24 hours")]);
+        _span.SelectedIndex = 0; // the last hour, where single minutes are readable; 24 h is one click away
+        _span.SelectedIndexChanged += (_, _) => RefreshData();
+        var toolbar = Ui.Toolbar(
+            new Label { Text = T("网络", "Network") }, _network,
+            new Label { Text = T("范围", "Range") }, _range,
+            new Label { Text = T("时间线", "Timeline") }, _span);
 
         // Dock order: last added is laid out first.
         Controls.Add(_outages);
@@ -191,7 +198,8 @@ internal sealed class QualityPage : UserControl, IActivatablePage
         _rangeTitle.Text = T($"最近 {days} 天", $"Last {days} days");
         _rangeValue.Text = Describe(_ledger.Summarize(from, today, _networkKey));
 
-        _timeline.SetData(_ledger.Minutes(now - QualityLedger.TimelineSpan), now);
+        _timeline.Span = TimeSpan.FromHours(_span.SelectedIndex switch { 0 => 1, 1 => 6, _ => 24 });
+        _timeline.SetData(_ledger.Minutes(now - _timeline.Span), now);
         _daily.SetData(_ledger.Daily(from, today, _networkKey));
         RefreshOutages();
     }

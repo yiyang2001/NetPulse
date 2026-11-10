@@ -55,7 +55,11 @@ internal sealed class QualityTimeline : Control
         BackColor = SystemColors.Window;
     }
 
-    private DateTime Start => _end - QualityLedger.TimelineSpan;
+    /// <summary>How much of the stored 24 hours is shown; shorter spans make single minutes readable.</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public TimeSpan Span { get; set; } = QualityLedger.TimelineSpan;
+
+    private DateTime Start => _end - Span;
 
     public void SetData(IReadOnlyList<QualityMinute> minutes, DateTime now)
     {
@@ -69,7 +73,7 @@ internal sealed class QualityTimeline : Control
         var g = e.Graphics;
         g.Clear(BackColor);
         var (strip, plot) = Areas();
-        var total = QualityLedger.TimelineSpan.TotalMinutes;
+        var total = Span.TotalMinutes;
         float X(DateTime t) => strip.Left + (float)((t - Start).TotalMinutes / total * strip.Width);
 
         // Unmonitored time stays this faint background.
@@ -99,10 +103,10 @@ internal sealed class QualityTimeline : Control
         DrawLine(g, QualityLook.ExternalLine, m => m.ExternalMs, X, plot, max);
         g.SmoothingMode = SmoothingMode.None;
 
-        for (var hours = 0; hours <= 24; hours += 6)
+        for (var quarter = 0; quarter <= 4; quarter++)
         {
-            var t = Start.AddHours(hours);
-            var label = hours == 24 ? T("现在", "now") : t.ToString("HH:mm");
+            var t = Start + (Span * quarter / 4);
+            var label = quarter == 4 ? T("现在", "now") : t.ToString("HH:mm");
             var size = TextRenderer.MeasureText(label, Font);
             var x = Math.Clamp((int)X(t) - (size.Width / 2), plot.Left, plot.Right - size.Width);
             TextRenderer.DrawText(g, label, Font, new Point(x, plot.Bottom + 2), SystemColors.GrayText);
@@ -151,7 +155,7 @@ internal sealed class QualityTimeline : Control
         var (strip, plot) = Areas();
         var index = e.X < strip.Left || e.X > strip.Right || e.Y < strip.Top || e.Y > plot.Bottom
             ? -1
-            : Math.Clamp((int)((e.X - strip.Left) / (float)strip.Width * QualityLedger.TimelineSpan.TotalMinutes), 0, (int)QualityLedger.TimelineSpan.TotalMinutes - 1);
+            : Math.Clamp((int)((e.X - strip.Left) / (float)strip.Width * Span.TotalMinutes), 0, (int)Span.TotalMinutes - 1);
         if (index == _hoverMinute)
         {
             return;
