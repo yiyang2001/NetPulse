@@ -18,6 +18,7 @@ internal sealed partial class NetPulseContext
             Usage = new UsageDocument { Days = [.. _monitor.Ledger.ToList()] },
             NetworkUsage = _monitor.Networks.ToDocument(),
             ProcessUsage = _processTraffic.History.ToDocument(),
+            Quality = _quality.ToDocument(),
         });
     }
 
@@ -29,6 +30,7 @@ internal sealed partial class NetPulseContext
         _usageStore.Save(backup.Usage);
         _networkUsageStore.Save(backup.NetworkUsage);
         _processUsageStore.Save(backup.ProcessUsage);
+        _qualityStore.Save(backup.Quality); // a format 1 backup has none: the restored PC starts without quality history
 
         _importing = true;
         try
@@ -126,6 +128,8 @@ internal sealed partial class NetPulseContext
         {
             history.MarkSaved();
         }
+
+        SaveQuality(keepFrom);
     }
 
     /// <summary>Writes one document; a full disk or a locked file is logged and retried on the next save.</summary>

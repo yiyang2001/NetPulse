@@ -43,7 +43,14 @@ internal sealed class SettingsPage : UserControl
     private readonly NumericUpDown _speedAlertMinutes = Number(1, 240, 1, 0);
     private readonly CheckBox _programAlert = Check(T("某个程序当天流量超出设定值时提醒（需要以管理员身份运行）", "Alert when a program exceeds a daily amount (needs administrator rights)"));
     private readonly NumericUpDown _programAlertLimit = Number(1, 100_000_000, 100, 0);
-    private readonly CheckBox _weeklySummary = Check(T("每周一用通知显示上周流量", "Show last week's traffic in a notification on Mondays"));
+    private readonly CheckBox _qualityEnabled = Check(T("开启连接质量监测（定时 Ping 网关，只在局域网内）", "Monitor the connection (pings the gateway, stays inside your local network)"));
+    private readonly CheckBox _qualityExternal = Check(T("同时 Ping 外网地址，区分本地问题和运营商问题", "Also ping an internet address, to tell local problems from ISP problems"));
+    private readonly TextBox _qualityTarget = new() { Width = 200 };
+    private readonly NumericUpDown _qualityInterval = Number(2, 60, 1, 0);
+    private readonly NumericUpDown _qualityLatency = Number(20, 2000, 10, 0);
+    private readonly CheckBox _qualityAlert = Check(T("断线后提醒（恢复连接时显示断了多久）", "Notify after an outage (when the connection is back, with how long it lasted)"));
+    private readonly NumericUpDown _qualityAlertSeconds = Number(15, 86_400, 15, 0);
+    private readonly CheckBox _weeklySummary =Check(T("每周一用通知显示上周流量", "Show last week's traffic in a notification on Mondays"));
     private readonly Label _installStatus = Note();
     private readonly Button _install = new() { AutoSize = true };
     private readonly Button _uninstall = new() { Text = T("卸载…", "Uninstall…"), AutoSize = true };
@@ -101,6 +108,23 @@ internal sealed class SettingsPage : UserControl
             Row(T("提醒阈值（%）", "Warn at (%)"), _planWarn),
             _planUpload));
         layout.Controls.Add(Group(
+            T("连接质量", "Connection quality"),
+            _qualityEnabled,
+            Row(T("间隔（秒）", "Every (seconds)"), _qualityInterval),
+            Row(T("延迟高于（毫秒）算偏高", "High latency above (ms)"), _qualityLatency),
+            _qualityExternal,
+            Row(T("外网地址", "Internet address"), _qualityTarget),
+            new Label
+            {
+                AutoSize = true,
+                MaximumSize = new Size(560, 0),
+                ForeColor = SystemColors.GrayText,
+                Text = T("开启外网探测后，NetPulse 会按上面的间隔持续 Ping 这个地址，每天约 1 MB。默认的 1.1.1.1 是 Cloudflare 的公共 DNS。", "With the internet probe on, NetPulse keeps pinging this address at the interval above, about 1 MB a day. The default 1.1.1.1 is Cloudflare's public DNS."),
+                Padding = new Padding(0, 2, 0, 4),
+            },
+            _qualityAlert,
+            Row(T("断线超过（秒）", "Outage longer than (s)"), _qualityAlertSeconds)));
+        layout.Controls.Add(Group(
             T("提醒", "Alerts"),
             _speedAlert,
             Row(T("方向", "Direction"), _speedAlertDirection),
@@ -121,7 +145,7 @@ internal sealed class SettingsPage : UserControl
                 AutoSize = true,
                 MaximumSize = new Size(560, 0),
                 Text = T("NetPulse 不收集、不上传任何数据，也没有广告或付费功能。只有在你主动使用测速、查询公网 IP、", "NetPulse collects and uploads nothing, and has no ads or paid features. It only goes online when you run a speed test, look up your public IP, ") +
-                    T("Ping / 路由追踪 / DNS 查询、端口检测时，或者开启了自动测速、更新检查时才会联网，且只连接对应的目标。\n所有设置和统计只保存在本机：", "or use Ping / Traceroute / DNS lookup / Port check, or when you turned on automatic speed tests or the update check, and then only contacts that target.\nAll settings and statistics stay on this PC: ") + AppPaths.DataDirectory,
+                    T("Ping / 路由追踪 / DNS 查询、端口检测时，或者开启了自动测速、更新检查、连接质量的外网探测时才会联网，且只连接对应的目标。\n所有设置和统计只保存在本机：", "or use Ping / Traceroute / DNS lookup / Port check, or when you turned on automatic speed tests, the update check or the internet probe of connection quality, and then only contacts that target.\nAll settings and statistics stay on this PC: ") + AppPaths.DataDirectory,
                 Padding = new Padding(0, 6, 0, 6),
             },
             openFolder,
@@ -154,12 +178,14 @@ internal sealed class SettingsPage : UserControl
             combo.SelectedIndexChanged += OnChanged;
         }
 
-        foreach (var number in new[] { _interval, _fontSize, _planLimit, _planDay, _planWarn, _retention, _speedAlertLimit, _speedAlertMinutes, _programAlertLimit })
+        foreach (var number in new[] { _interval, _fontSize, _planLimit, _planDay, _planWarn, _retention, _speedAlertLimit, _speedAlertMinutes, _programAlertLimit, _qualityInterval, _qualityLatency, _qualityAlertSeconds })
         {
             number.ValueChanged += OnChanged;
         }
 
-        foreach (var check in new[] { _updateCheck, _speedAlert,_programAlert, _weeklySummary, _miniGraph, _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
+        _qualityTarget.Leave += OnChanged; // not per keystroke: a half-typed host name is not worth probing
+
+        foreach (var check in new[] { _qualityEnabled, _qualityExternal, _qualityAlert, _updateCheck, _speedAlert,_programAlert, _weeklySummary, _miniGraph, _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
         {
             check.CheckedChanged += OnChanged;
         }
@@ -217,6 +243,13 @@ internal sealed class SettingsPage : UserControl
             _programAlert.Checked = _settings.ProgramAlert.Enabled;
             _programAlertLimit.Value = (decimal)_settings.ProgramAlert.LimitMb;
             _weeklySummary.Checked = _settings.WeeklySummary;
+            _qualityEnabled.Checked = _settings.Quality.Enabled;
+            _qualityExternal.Checked = _settings.Quality.ProbeExternal;
+            _qualityTarget.Text = _settings.Quality.ExternalTarget;
+            _qualityInterval.Value = _settings.Quality.IntervalSeconds;
+            _qualityLatency.Value = _settings.Quality.HighLatencyMs;
+            _qualityAlert.Checked = _settings.Quality.OutageAlert;
+            _qualityAlertSeconds.Value = _settings.Quality.OutageAlertSeconds;
             _updateCheck.Checked = _settings.UpdateCheck.Enabled && UpdateService.IsConfigured;
             LoadInstall();
             UpdatePlanEnabledState();
@@ -264,6 +297,13 @@ internal sealed class SettingsPage : UserControl
         _settings.ProgramAlert.Enabled = _programAlert.Checked;
         _settings.ProgramAlert.LimitMb = (double)_programAlertLimit.Value;
         _settings.WeeklySummary = _weeklySummary.Checked;
+        _settings.Quality.Enabled = _qualityEnabled.Checked;
+        _settings.Quality.ProbeExternal = _qualityExternal.Checked;
+        _settings.Quality.ExternalTarget = _qualityTarget.Text;
+        _settings.Quality.IntervalSeconds = (int)_qualityInterval.Value;
+        _settings.Quality.HighLatencyMs = (int)_qualityLatency.Value;
+        _settings.Quality.OutageAlert = _qualityAlert.Checked;
+        _settings.Quality.OutageAlertSeconds = (int)_qualityAlertSeconds.Value;
         if (UpdateService.IsConfigured)
         {
             if (_updateCheck.Checked && !_settings.UpdateCheck.Enabled)
@@ -479,6 +519,9 @@ internal sealed class SettingsPage : UserControl
         _planLimit.Enabled = _planDay.Enabled = _planWarn.Enabled = _planUpload.Enabled = _planEnabled.Checked;
         _speedAlertDirection.Enabled = _speedAlertLimit.Enabled = _speedAlertMinutes.Enabled = _speedAlert.Checked;
         _programAlertLimit.Enabled = _programAlert.Checked;
+        _qualityInterval.Enabled = _qualityLatency.Enabled = _qualityExternal.Enabled = _qualityAlert.Enabled = _qualityEnabled.Checked;
+        _qualityTarget.Enabled = _qualityEnabled.Checked && _qualityExternal.Checked;
+        _qualityAlertSeconds.Enabled = _qualityEnabled.Checked && _qualityAlert.Checked;
     }
 
     private void ExportBackup()

@@ -87,7 +87,7 @@ internal sealed partial class NetPulseContext
         ShowBalloon(
             10_000,
             T($"上周流量（{summary.From:M/d} – {summary.To:M/d}）", $"Last week ({summary.From:M/d} – {summary.To:M/d})"),
-            T($"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}，合计 {ByteFormatter.FormatSize(summary.Week.Total)}{change}", $"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}, {ByteFormatter.FormatSize(summary.Week.Total)} in total{change}"),
+            T($"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}，合计 {ByteFormatter.FormatSize(summary.Week.Total)}{change}", $"↓ {ByteFormatter.FormatSize(summary.Week.Downloaded)}  ↑ {ByteFormatter.FormatSize(summary.Week.Uploaded)}, {ByteFormatter.FormatSize(summary.Week.Total)} in total{change}") + WeeklyQualityText(summary.From, summary.To),
             ToolTipIcon.Info);
     }
 

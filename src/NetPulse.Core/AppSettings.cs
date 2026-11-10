@@ -101,6 +101,9 @@ public sealed class AppSettings
     /// <summary>Own plans for single networks (e.g. a phone hotspot), by <see cref="NetworkIdentity.Key"/>; checked on top of <see cref="Plan"/>.</summary>
     public Dictionary<string, DataPlanSettings> NetworkPlans { get; set; } = [];
 
+    /// <summary>Gateway / internet ping monitoring (v0.10), off by default.</summary>
+    public ConnectionQualitySettings Quality { get; set; } = new();
+
     /// <summary>Clamps values edited by hand or written by older versions into supported ranges.</summary>
     public AppSettings Normalize()
     {
@@ -153,6 +156,8 @@ public sealed class AppSettings
         SpeedTestSchedule.Normalize();
         UpdateCheck ??= new UpdateCheckSettings();
         UpdateCheck.Normalize();
+        Quality ??= new ConnectionQualitySettings();
+        Quality.Normalize();
         NetworkPlans = (NetworkPlans ?? [])
             .Where(p => p.Value is not null)
             .ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);

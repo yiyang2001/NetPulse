@@ -5,6 +5,7 @@ internal enum MainTab
 {
     Usage,
     Graph,
+    Quality,
     Processes,
     Wifi,
     SpeedTest,

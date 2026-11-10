@@ -5,7 +5,8 @@ namespace NetPulse.Core;
 /// <summary>Settings and all statistics in one file, to move NetPulse to another PC or restore it.</summary>
 public sealed class BackupDocument
 {
-    public const int CurrentFormat = 1;
+    /// <summary>2 (v0.10) adds <see cref="Quality"/>; format 1 backups have none and still restore.</summary>
+    public const int CurrentFormat = 2;
 
     public int Format { get; set; } = CurrentFormat;
 
@@ -20,6 +21,8 @@ public sealed class BackupDocument
     public NetworkUsageDocument NetworkUsage { get; set; } = new();
 
     public ProcessUsageDocument ProcessUsage { get; set; } = new();
+
+    public QualityDocument Quality { get; set; } = new();
 
     public static void Write(string path, BackupDocument backup)
     {
@@ -55,6 +58,7 @@ public sealed class BackupDocument
         backup.Usage ??= new UsageDocument();
         backup.NetworkUsage ??= new NetworkUsageDocument();
         backup.ProcessUsage ??= new ProcessUsageDocument();
+        backup.Quality ??= new QualityDocument();
         return backup;
     }
 }

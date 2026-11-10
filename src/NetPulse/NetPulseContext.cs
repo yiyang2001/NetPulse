@@ -119,6 +119,7 @@ internal sealed partial class NetPulseContext : ApplicationContext
         _widget.RestorePosition(_settings.Placement, _settings.WidgetX, _settings.WidgetY);
         _ = _widget.Handle; // create the window now so it can marshal calls from other threads
 
+        InitQuality();
         _sampleTimer.Tick += (_, _) => OnSample();
         _housekeepingTimer.Tick += (_, _) => OnHousekeeping();
         ApplySettings(save: false);
@@ -183,6 +184,7 @@ internal sealed partial class NetPulseContext : ApplicationContext
             _showWindowSignal.Dispose();
             _sampleTimer.Dispose();
             _housekeepingTimer.Dispose();
+            _qualityTimer.Dispose();
             _tray.Visible = false;
             _tray.Dispose();
             if (_speedTrayIcon is not null)
@@ -230,6 +232,7 @@ internal sealed partial class NetPulseContext : ApplicationContext
 
         _menu.Items.Add(T("流量统计…", "Usage…"), null, (_, _) => ShowMainWindow(MainTab.Usage));
         _menu.Items.Add(T("实时速度…", "Live speed…"), null, (_, _) => ShowMainWindow(MainTab.Graph));
+        _menu.Items.Add(T("连接质量…", "Connection quality…"), null, (_, _) => ShowMainWindow(MainTab.Quality));
         _menu.Items.Add(T("进程流量…", "Programs…"), null, (_, _) => ShowMainWindow(MainTab.Processes));
         _menu.Items.Add("Wi-Fi…", null, (_, _) => ShowMainWindow(MainTab.Wifi));
         _menu.Items.Add(T("测速…", "Speed test…"), null, (_, _) => ShowMainWindow(MainTab.SpeedTest));
@@ -263,6 +266,7 @@ internal sealed partial class NetPulseContext : ApplicationContext
         _sampleTimer.Interval = _settings.RefreshIntervalMs;
         _widget.ApplySettings(_settings);
         UpdateWidgetVisibility();
+        ApplyQualitySettings();
         if (save)
         {
             SaveSettings();
@@ -291,6 +295,11 @@ internal sealed partial class NetPulseContext : ApplicationContext
         var down = ByteFormatter.FormatSpeed(sample.DownloadBytesPerSecond, _settings.Unit);
         var up = ByteFormatter.FormatSpeed(sample.UploadBytesPerSecond, _settings.Unit);
         var trayText = $"{AppPaths.AppName}\n↓ {down}   ↑ {up}";
+        if (QualityTrayLine() is { } quality)
+        {
+            trayText += "\n" + quality;
+        }
+
         if (trayText != _trayText)
         {
             _trayText = trayText;
@@ -391,6 +400,7 @@ internal sealed partial class NetPulseContext : ApplicationContext
             [
                 (MainTab.Usage, T("流量统计", "Usage"), new UsagePage(_monitor.Ledger, _monitor.Networks, _settings, SaveUsage, SaveSettings)),
                 (MainTab.Graph, T("实时速度", "Live speed"), new SpeedGraphPage(_speedHistory, _settings)),
+                (MainTab.Quality, T("连接质量", "Quality"), new QualityPage(_quality, _qualityMonitor, _qualityProbe, _settings, EnableQuality, SaveUsage)),
                 (MainTab.Processes, T("进程流量", "Programs"),new ProcessTrafficPage(_processTraffic, _settings, RestartElevated)),
                 (MainTab.Wifi, "Wi-Fi", new WifiHostPage()),
                 (MainTab.SpeedTest, T("测速", "Speed test"), new SpeedTestPage(_speedTests, _settings, SaveSettings)),
@@ -443,6 +453,8 @@ internal sealed partial class NetPulseContext : ApplicationContext
         _speedTestCancel.Cancel();
         _sampleTimer.Stop();
         _housekeepingTimer.Stop();
+        _qualityTimer.Stop();
+        StopQuality();
         SaveUsage();
         SaveSettings();
         _tray.Visible = false;

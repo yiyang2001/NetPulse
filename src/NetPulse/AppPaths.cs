@@ -33,6 +33,8 @@ internal static class AppPaths
 
     public static string ProcessUsageFile => Path.Combine(DataDirectory, "process-usage.json");
 
+    public static string QualityFile => Path.Combine(DataDirectory, "quality.json");
+
     public static string ErrorLogFile => Path.Combine(DataDirectory, "error.log");
 
     /// <summary>ASCII letters/digits only, at most 16, lower-cased; anything else means no profile.</summary>
