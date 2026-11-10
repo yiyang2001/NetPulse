@@ -38,8 +38,10 @@ internal sealed class QualityProbeService(WifiNetworkNames networkNames)
             var network = networkNames.Identify(target.Adapter);
             var gateway = PingAsync(target.Gateway, cancellationToken);
             var external = settings.ProbeExternal ? PingHostAsync(settings.ExternalTarget, cancellationToken) : Task.FromResult<double?>(null);
-            await Task.WhenAll(gateway, external);
-            var probe = new QualityProbe(network, gateway.Result, settings.ProbeExternal, external.Result);
+            var dnsProbed = settings.ProbeDns && target.DnsServer is not null;
+            var dns = dnsProbed ? QueryDnsAsync(target.DnsServer!, cancellationToken) : Task.FromResult(false);
+            await Task.WhenAll(gateway, external, dns);
+            var probe = new QualityProbe(network, gateway.Result, settings.ProbeExternal, external.Result, WifiSignal(target.Adapter), dnsProbed, dns.Result);
             Last = probe;
             return probe;
         }
@@ -91,7 +93,9 @@ internal sealed class QualityProbeService(WifiNetworkNames networkNames)
                 var index = properties.GetIPv4Properties()?.Index ?? properties.GetIPv6Properties()?.Index ?? -1;
                 var adapter = new AdapterSnapshot(nic.Id, nic.Name, nic.Description, nic.NetworkInterfaceType,
                     NetworkAdapters.IsVirtual(nic.Name, nic.Description), new TrafficCounters(0, 0));
-                candidates.Add(new GatewayCandidate(adapter, index, gateway));
+                var dnsServers = properties.DnsAddresses.Where(a => !a.IsIPv6SiteLocal).ToList();
+                var dnsServer = dnsServers.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork) ?? dnsServers.FirstOrDefault();
+                candidates.Add(new GatewayCandidate(adapter, index, gateway, dnsServer));
             }
             catch (Exception ex) when (ex is NetworkInformationException or NotSupportedException)
             {
@@ -133,6 +137,54 @@ internal sealed class QualityProbeService(WifiNetworkNames networkNames)
         catch (PingException)
         {
             return null;
+        }
+    }
+
+    /// <summary>Signal quality of the current Wi-Fi connection; null for other adapters or when Windows withholds it (location permission).</summary>
+    private static int? WifiSignal(AdapterSnapshot adapter)
+    {
+        if (adapter.Type != NetworkInterfaceType.Wireless80211 || !Guid.TryParse(adapter.Id, out var id))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var wlan = new WlanClient();
+            return wlan.GetCurrentConnection(id) is { } connection ? (int)Math.Min(100, connection.SignalQuality) : null;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Sends one query straight to <paramref name="server"/> (not through the Windows DNS cache); true if it answered within the timeout.</summary>
+    private static async Task<bool> QueryDnsAsync(IPAddress server, CancellationToken cancellationToken)
+    {
+        var id = (ushort)Random.Shared.Next(ushort.MaxValue + 1);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(Timeout);
+        try
+        {
+            using var udp = new UdpClient(server.AddressFamily);
+            await udp.SendAsync(DnsProbe.BuildQuery(id), new IPEndPoint(server, 53), timeout.Token);
+            while (true)
+            {
+                var reply = await udp.ReceiveAsync(timeout.Token);
+                if (reply.RemoteEndPoint.Address.Equals(server) && DnsProbe.IsAnswer(reply.Buffer, id))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false; // no answer within the timeout
+        }
+        catch (SocketException)
+        {
+            return false; // e.g. ICMP port unreachable: nothing listens on port 53 there
         }
     }
 

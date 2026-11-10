@@ -12,6 +12,9 @@ public sealed class ConnectionQualitySettings
     /// <summary>Also ping <see cref="ExternalTarget"/>, to tell local problems from internet (ISP) problems.</summary>
     public bool ProbeExternal { get; set; }
 
+    /// <summary>Also ask the network's DNS server for <see cref="DnsProbe.QueryName"/> each round.</summary>
+    public bool ProbeDns { get; set; }
+
     public string ExternalTarget { get; set; } = DefaultExternalTarget;
 
     public int IntervalSeconds { get; set; } = 5;
@@ -45,7 +48,16 @@ public sealed class ConnectionQualitySettings
 /// One probe round. <paramref name="Network"/> is null when no adapter has a gateway (not connected).
 /// Latencies are in milliseconds; null means no reply within the timeout.
 /// </summary>
-public readonly record struct QualityProbe(NetworkIdentity? Network, double? GatewayMs, bool ExternalProbed = false, double? ExternalMs = null)
+/// <param name="SignalPercent">Wi-Fi signal quality (0–100) when connected over Wi-Fi and Windows reports it.</param>
+/// <param name="DnsProbed">A DNS query was sent to the network's DNS server; <paramref name="DnsOk"/> tells whether it answered.</param>
+public readonly record struct QualityProbe(
+    NetworkIdentity? Network,
+    double? GatewayMs,
+    bool ExternalProbed = false,
+    double? ExternalMs = null,
+    int? SignalPercent = null,
+    bool DnsProbed = false,
+    bool DnsOk = false)
 {
     public static QualityProbe NotConnected => new(null, null);
 }
@@ -59,6 +71,9 @@ public enum QualityState
     /// <summary>A lost reply that did not (yet) become an outage.</summary>
     Loss,
     Disconnected,
+
+    /// <summary>Pings answered but the DNS server did not: "connected, but web pages do not open".</summary>
+    DnsOutage,
     ExternalOutage,
     LocalOutage,
 }
@@ -70,6 +85,9 @@ public enum OutageKind
 
     /// <summary>The gateway answered but the internet address did not: ISP or upstream.</summary>
     External,
+
+    /// <summary>Gateway (and internet address, if probed) answered but the DNS server did not.</summary>
+    Dns,
 }
 
 public sealed record Outage(DateTime Start, DateTime End, OutageKind Kind, string NetworkKey, string NetworkLabel)
@@ -156,6 +174,10 @@ public sealed class QualityDay
 
     public int ExternalLost { get; set; }
 
+    public int DnsSamples { get; set; }
+
+    public int DnsLost { get; set; }
+
     public int[] GatewayLatency { get; set; } = LatencyHistogram.Create();
 
     public int[] ExternalLatency { get; set; } = LatencyHistogram.Create();
@@ -175,6 +197,13 @@ public sealed class QualityMinute
     public double ExternalMsSum { get; set; }
 
     public int ExternalReplies { get; set; }
+
+    public double SignalSum { get; set; }
+
+    public int SignalSamples { get; set; }
+
+    [JsonIgnore]
+    public double? SignalPercent => SignalSamples > 0 ? SignalSum / SignalSamples : null;
 
     [JsonIgnore]
     public double? GatewayMs => GatewayReplies > 0 ? GatewayMsSum / GatewayReplies : null;
@@ -203,8 +232,12 @@ public sealed record QualitySummary(
     double? GatewayMedianMs,
     double? GatewayP95Ms,
     double? ExternalMedianMs,
-    double? ExternalP95Ms)
+    double? ExternalP95Ms,
+    int DnsSamples = 0,
+    int DnsLost = 0)
 {
+    public double? DnsFailureRate => DnsSamples > 0 ? (double)DnsLost / DnsSamples : null;
+
     /// <summary>Share of monitored time outside outages; null when nothing was monitored.</summary>
     public double? Availability => MonitoredSeconds > 0 ? Math.Clamp((MonitoredSeconds - DownSeconds) / MonitoredSeconds, 0, 1) : null;
 
@@ -342,7 +375,7 @@ public sealed class QualityLedger
     {
         var days = _days.Values.Where(d => d.Date >= from && d.Date <= to && (networkKey is null || d.NetworkKey == networkKey));
         double monitored = 0, down = 0, disconnected = 0;
-        int outages = 0, gwSamples = 0, gwLost = 0, extSamples = 0, extLost = 0;
+        int outages = 0, gwSamples = 0, gwLost = 0, extSamples = 0, extLost = 0, dnsSamples = 0, dnsLost = 0;
         var gateway = LatencyHistogram.Create();
         var external = LatencyHistogram.Create();
         foreach (var day in days)
@@ -355,6 +388,8 @@ public sealed class QualityLedger
             gwLost += day.GatewayLost;
             extSamples += day.ExternalSamples;
             extLost += day.ExternalLost;
+            dnsSamples += day.DnsSamples;
+            dnsLost += day.DnsLost;
             LatencyHistogram.Merge(gateway, day.GatewayLatency);
             LatencyHistogram.Merge(external, day.ExternalLatency);
         }
@@ -362,7 +397,8 @@ public sealed class QualityLedger
         return new QualitySummary(
             monitored, down, disconnected, outages, gwSamples, gwLost, extSamples, extLost,
             LatencyHistogram.Percentile(gateway, 0.5), LatencyHistogram.Percentile(gateway, 0.95),
-            LatencyHistogram.Percentile(external, 0.5), LatencyHistogram.Percentile(external, 0.95));
+            LatencyHistogram.Percentile(external, 0.5), LatencyHistogram.Percentile(external, 0.95),
+            dnsSamples, dnsLost);
     }
 
     /// <summary>One summary per day of the inclusive range, oldest first.</summary>
@@ -540,8 +576,24 @@ public sealed class QualityMonitor(QualityLedger ledger)
                 }
             }
 
+            if (probe.DnsProbed)
+            {
+                day.DnsSamples++;
+                if (!probe.DnsOk)
+                {
+                    day.DnsLost++;
+                }
+            }
+
+            if (probe.SignalPercent is { } signal)
+            {
+                minute.SignalSum += signal;
+                minute.SignalSamples++;
+            }
+
             OutageKind? failure = probe.GatewayMs is null ? OutageKind.Local
                 : probe.ExternalProbed && probe.ExternalMs is null ? OutageKind.External
+                : probe.DnsProbed && !probe.DnsOk ? OutageKind.Dns
                 : null;
             if (failure is null)
             {
@@ -563,9 +615,9 @@ public sealed class QualityMonitor(QualityLedger ledger)
                     _runStartWall = wall;
                     _runKind = failure.Value;
                 }
-                else if (failure == OutageKind.Local)
+                else if (Rank(failure.Value) > Rank(_runKind))
                 {
-                    _runKind = OutageKind.Local;
+                    _runKind = failure.Value; // the deepest layer that failed names the outage
                 }
 
                 _failures++;
@@ -617,8 +669,19 @@ public sealed class QualityMonitor(QualityLedger ledger)
         return ended;
     }
 
-    private static QualityState OutageState(OutageKind kind) =>
-        kind == OutageKind.Local ? QualityState.LocalOutage : QualityState.ExternalOutage;
+    private static QualityState OutageState(OutageKind kind) => kind switch
+    {
+        OutageKind.Local => QualityState.LocalOutage,
+        OutageKind.External => QualityState.ExternalOutage,
+        _ => QualityState.DnsOutage,
+    };
+
+    private static int Rank(OutageKind kind) => kind switch
+    {
+        OutageKind.Local => 3,
+        OutageKind.External => 2,
+        _ => 1,
+    };
 
     private Outage MakeOutage(TimeSpan endMono) =>
         new(_runStartWall, _runStartWall + (endMono - _runStartMono), _runKind, _outageNetwork.Key, _outageNetwork.Label);
@@ -645,7 +708,54 @@ public sealed class QualityMonitor(QualityLedger ledger)
 }
 
 /// <summary>An up adapter with a default gateway, a candidate for the connection quality probe.</summary>
-public sealed record GatewayCandidate(AdapterSnapshot Adapter, int InterfaceIndex, System.Net.IPAddress Gateway);
+public sealed record GatewayCandidate(AdapterSnapshot Adapter, int InterfaceIndex, System.Net.IPAddress Gateway, System.Net.IPAddress? DnsServer = null);
+
+/// <summary>
+/// A minimal DNS query (one A record, recursion desired) sent straight to the network's DNS server, so the
+/// answer is not served from the Windows DNS cache. Any well-formed reply counts, even "no such name":
+/// the server answering is what is being checked.
+/// </summary>
+public static class DnsProbe
+{
+    public const string QueryName = "cloudflare.com";
+
+    public static byte[] BuildQuery(ushort id, string name = QueryName)
+    {
+        var packet = new List<byte>
+        {
+            (byte)(id >> 8), (byte)id,
+            0x01, 0x00, // standard query, recursion desired
+            0x00, 0x01, // one question
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        };
+        foreach (var label in name.TrimEnd('.').Split('.'))
+        {
+            var bytes = System.Text.Encoding.ASCII.GetBytes(label);
+            if (bytes.Length is 0 or > 63)
+            {
+                throw new ArgumentException("Not a valid host name.", nameof(name));
+            }
+
+            packet.Add((byte)bytes.Length);
+            packet.AddRange(bytes);
+        }
+
+        packet.AddRange([0x00, 0x00, 0x01, 0x00, 0x01]); // end of name, type A, class IN
+        return [.. packet];
+    }
+
+    /// <summary>A reply to query <paramref name="id"/> from a working server: header present, QR bit set, not SERVFAIL or REFUSED.</summary>
+    public static bool IsAnswer(ReadOnlySpan<byte> reply, ushort id)
+    {
+        if (reply.Length < 12 || ((reply[0] << 8) | reply[1]) != id || (reply[2] & 0x80) == 0)
+        {
+            return false;
+        }
+
+        var rcode = reply[3] & 0x0F;
+        return rcode is not (2 or 5); // 2 SERVFAIL: it could not resolve upstream; 5 REFUSED
+    }
+}
 
 public static class GatewayChoice
 {

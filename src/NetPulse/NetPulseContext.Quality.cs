@@ -90,13 +90,19 @@ internal sealed partial class NetPulseContext
             var update = _qualityMonitor.Feed(probe, started, wall, settings.Interval, settings.HighLatencyMs);
             if (update.OutageEnded is { } outage && settings.ShouldAlert(outage))
             {
+                var (title, cause) = outage.Kind switch
+                {
+                    OutageKind.Local => (T("刚才断网了（本地问题）", "Connection was down (local problem)"),
+                        T("网关（路由器）没有回应，可能是 Wi-Fi 信号、网线或路由器的问题。", " The gateway (router) did not answer: Wi-Fi signal, cable or router.")),
+                    OutageKind.External => (T("刚才断网了（外网问题）", "Connection was down (internet problem)"),
+                        T("网关有回应但外网没有，问题通常在运营商或上游。", " The gateway answered but the internet did not: usually the ISP or upstream.")),
+                    _ => (T("刚才 DNS 不可用", "DNS was not working"),
+                        T("网络是通的，但 DNS 服务器没有回应，这段时间网页可能打不开。", " The network was up but the DNS server did not answer, so web pages may not have opened.")),
+                };
                 ShowBalloon(
                     10_000,
-                    outage.Kind == OutageKind.Local ? T("刚才断网了（本地问题）", "Connection was down (local problem)") : T("刚才断网了（外网问题）", "Connection was down (internet problem)"),
-                    T($"{outage.NetworkLabel}：{outage.Start:HH:mm:ss} 起，持续 {FormatDuration(outage.Duration)}。", $"{outage.NetworkLabel}: from {outage.Start:HH:mm:ss}, lasted {FormatDuration(outage.Duration)}.")
-                        + (outage.Kind == OutageKind.Local
-                            ? T("网关（路由器）没有回应，可能是 Wi-Fi 信号、网线或路由器的问题。", " The gateway (router) did not answer: Wi-Fi signal, cable or router.")
-                            : T("网关有回应但外网没有，问题通常在运营商或上游。", " The gateway answered but the internet did not: usually the ISP or upstream.")),
+                    title,
+                    T($"{outage.NetworkLabel}：{outage.Start:HH:mm:ss} 起，持续 {FormatDuration(outage.Duration)}。", $"{outage.NetworkLabel}: from {outage.Start:HH:mm:ss}, lasted {FormatDuration(outage.Duration)}.") + cause,
                     ToolTipIcon.Warning);
             }
         }

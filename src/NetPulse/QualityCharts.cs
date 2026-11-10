@@ -8,6 +8,7 @@ internal static class QualityLook
 {
     public static readonly Color GatewayLine = System.Drawing.Color.FromArgb(16, 185, 129);
     public static readonly Color ExternalLine = System.Drawing.Color.FromArgb(59, 130, 246);
+    public static readonly Color SignalLine = System.Drawing.Color.FromArgb(148, 163, 184);
 
     public static Color For(QualityState state) => state switch
     {
@@ -15,6 +16,7 @@ internal static class QualityLook
         QualityState.HighLatency => System.Drawing.Color.FromArgb(245, 158, 11),
         QualityState.Loss => System.Drawing.Color.FromArgb(250, 204, 21),
         QualityState.Disconnected => System.Drawing.Color.FromArgb(148, 163, 184),
+        QualityState.DnsOutage => System.Drawing.Color.FromArgb(6, 182, 212),
         QualityState.ExternalOutage => System.Drawing.Color.FromArgb(168, 85, 247),
         _ => System.Drawing.Color.FromArgb(239, 68, 68),
     };
@@ -25,11 +27,17 @@ internal static class QualityLook
         QualityState.HighLatency => T("延迟高", "High latency"),
         QualityState.Loss => T("丢包", "Packet loss"),
         QualityState.Disconnected => T("未连接", "Not connected"),
+        QualityState.DnsOutage => T("DNS 问题", "DNS problem"),
         QualityState.ExternalOutage => T("外网问题", "Internet problem"),
         _ => T("本地问题", "Local problem"),
     };
 
-    public static string Name(OutageKind kind) => kind == OutageKind.Local ? Name(QualityState.LocalOutage) : Name(QualityState.ExternalOutage);
+    public static string Name(OutageKind kind) => Name(kind switch
+    {
+        OutageKind.Local => QualityState.LocalOutage,
+        OutageKind.External => QualityState.ExternalOutage,
+        _ => QualityState.DnsOutage,
+    });
 }
 
 /// <summary>The last 24 hours: one colored cell per minute on top, the gateway and internet latency below, hover for values.</summary>
@@ -85,6 +93,8 @@ internal sealed class QualityTimeline : Control
         TextRenderer.DrawText(g, $"{max:0} ms", Font, new Point(plot.Left, plot.Top), SystemColors.GrayText);
 
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        // Wi-Fi signal on its own 0–100 % scale, dashed and behind the latency lines.
+        DrawLine(g, QualityLook.SignalLine, m => m.SignalPercent, X, plot, 100, dashed: true);
         DrawLine(g, QualityLook.GatewayLine, m => m.GatewayMs, X, plot, max);
         DrawLine(g, QualityLook.ExternalLine, m => m.ExternalMs, X, plot, max);
         g.SmoothingMode = SmoothingMode.None;
@@ -106,9 +116,9 @@ internal sealed class QualityTimeline : Control
         }
     }
 
-    private void DrawLine(Graphics g, Color color, Func<QualityMinute, double?> value, Func<DateTime, float> x, Rectangle plot, double max)
+    private void DrawLine(Graphics g, Color color, Func<QualityMinute, double?> value, Func<DateTime, float> x, Rectangle plot, double max, bool dashed = false)
     {
-        using var pen = new Pen(color, 1.5f);
+        using var pen = new Pen(color, 1.5f) { DashStyle = dashed ? DashStyle.Dash : DashStyle.Solid };
         using var dot = new SolidBrush(color);
         PointF? previous = null;
         DateTime previousMinute = default;
@@ -161,6 +171,11 @@ internal sealed class QualityTimeline : Control
             ? $"{time:HH:mm}\n" + T("未监测", "Not monitored")
             : $"{time:HH:mm}  {QualityLook.Name(minute.State)}\n" + T("网关 ", "Gateway ") + NetPulseContext.FormatLatency(minute.GatewayMs)
                 + (minute.ExternalReplies > 0 || minute.State == QualityState.ExternalOutage ? "\n" + T("外网 ", "Internet ") + NetPulseContext.FormatLatency(minute.ExternalMs) : string.Empty);
+        if (minute?.SignalPercent is { } signal)
+        {
+            text += "\n" + T($"Wi-Fi 信号 {signal:0}%", $"Wi-Fi signal {signal:0}%");
+        }
+
         _toolTip.Show(text, this, e.X + 12, e.Y + 12);
     }
 

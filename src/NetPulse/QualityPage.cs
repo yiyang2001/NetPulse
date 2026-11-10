@@ -74,8 +74,8 @@ internal sealed class QualityPage : UserControl, IActivatablePage
         var timelinePanel = new Panel { Dock = DockStyle.Top, Height = 130, Padding = new Padding(0, 4, 0, 4) };
         timelinePanel.Controls.Add(_timeline);
         var legend = Ui.Note(T(
-            "最近 24 小时：绿 正常 · 橙 延迟高 · 黄 丢包 · 红 本地问题 · 紫 外网问题 · 灰 未连接。曲线：绿 网关，蓝 外网。",
-            "Last 24 h: green OK · orange slow · yellow loss · red local problem · purple internet problem · gray offline. Lines: green gateway, blue internet."));
+            "最近 24 小时：绿 正常 · 橙 延迟高 · 黄 丢包 · 红 本地问题 · 紫 外网问题 · 青 DNS 问题 · 灰 未连接。曲线：绿 网关，蓝 外网，灰色虚线 Wi-Fi 信号（0–100%）。",
+            "Last 24 h: green OK · orange slow · yellow loss · red local · purple internet · cyan DNS · gray offline. Lines: green gateway, blue internet, dashed gray Wi-Fi signal (0–100%)."));
         var dailyPanel = new Panel { Dock = DockStyle.Top, Height = 96, Padding = new Padding(0, 4, 0, 8) };
         dailyPanel.Controls.Add(_daily);
 
@@ -164,6 +164,11 @@ internal sealed class QualityPage : UserControl, IActivatablePage
             text.Append('\n').Append(T("外网 ", "Internet ")).Append(Latency(summary.ExternalMedianMs, summary.ExternalP95Ms, summary.ExternalLossRate));
         }
 
+        if (summary.DnsFailureRate is { } dns)
+        {
+            text.Append('\n').Append(dns > 0 ? T($"DNS 失败 {dns:P1}", $"DNS {dns:P1} failed") : T("DNS 正常", "DNS OK"));
+        }
+
         return text.ToString();
     }
 
@@ -220,6 +225,22 @@ internal sealed class QualityPage : UserControl, IActivatablePage
         if (last.ExternalProbed)
         {
             text += "\n" + T("外网 ", "Internet ") + $"{_settings.Quality.ExternalTarget}: {NetPulseContext.FormatLatency(last.ExternalMs)}";
+        }
+
+        var extras = new List<string>();
+        if (last.DnsProbed)
+        {
+            extras.Add(last.DnsOk ? T("DNS 正常", "DNS OK") : T("DNS 无回应", "DNS no answer"));
+        }
+
+        if (last.SignalPercent is { } signal)
+        {
+            extras.Add(T($"信号 {signal}%", $"signal {signal}%"));
+        }
+
+        if (extras.Count > 0)
+        {
+            text += "\n" + string.Join(" · ", extras);
         }
 
         return text;

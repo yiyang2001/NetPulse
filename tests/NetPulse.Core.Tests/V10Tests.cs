@@ -462,3 +462,98 @@ public sealed class GatewayChoiceTests
         Assert.Null(GatewayChoice.Pick([], 7));
     }
 }
+
+public sealed class QualityDnsAndSignalTests
+{
+    private static readonly NetworkIdentity Home = NetworkIdentity.ForWifi("Home");
+    private static readonly DateTime Base = new(2026, 11, 10, 12, 0, 0);
+    private static readonly DateOnly Today = DateOnly.FromDateTime(Base);
+
+    private readonly QualityLedger _ledger = new();
+    private readonly QualityMonitor _monitor;
+
+    public QualityDnsAndSignalTests() => _monitor = new QualityMonitor(_ledger);
+
+    private static QualityProbe Round(bool dnsOk, double? external = 20, int? signal = null) =>
+        new(Home, 3, ExternalProbed: true, ExternalMs: external, SignalPercent: signal, DnsProbed: true, DnsOk: dnsOk);
+
+    private QualityUpdate Feed(QualityProbe probe, double seconds) =>
+        _monitor.Feed(probe, TimeSpan.FromSeconds(seconds), Base.AddSeconds(seconds), TimeSpan.FromSeconds(5), 200);
+
+    [Fact]
+    public void PingsAnsweredButNoDnsIsADnsOutage()
+    {
+        Feed(Round(true), 0);
+        Feed(Round(false), 5);
+        Feed(Round(false), 10);
+        Assert.Equal(QualityState.DnsOutage, Feed(Round(false), 15).State);
+        Assert.Equal(OutageKind.Dns, Feed(Round(true), 20).OutageEnded!.Kind);
+
+        var summary = _ledger.Summarize(Today, Today);
+        Assert.Equal(5, summary.DnsSamples);
+        Assert.Equal(3, summary.DnsLost);
+        Assert.Equal(0.6, summary.DnsFailureRate);
+        Assert.Equal(0, summary.ExternalLost);
+    }
+
+    [Fact]
+    public void TheDeepestFailingLayerNamesTheOutage()
+    {
+        Feed(Round(true), 0);
+        Feed(Round(false), 5);                  // DNS only
+        Feed(Round(false, external: null), 10); // internet down too
+        Feed(Round(false), 15);
+        Assert.Equal(OutageKind.External, Feed(Round(true), 20).OutageEnded!.Kind);
+
+        // DNS failing while the internet address is already down stays an internet problem.
+        Feed(Round(false, external: null), 25);
+        Feed(Round(false, external: null), 30);
+        Assert.Equal(QualityState.ExternalOutage, Feed(Round(false), 35).State);
+    }
+
+    [Fact]
+    public void DnsIsNotCountedWhenNotProbed()
+    {
+        Feed(new QualityProbe(Home, 3), 0);
+        Assert.Null(_ledger.Summarize(Today, Today).DnsFailureRate);
+    }
+
+    [Fact]
+    public void TimelineMinutesAverageTheWifiSignal()
+    {
+        Feed(Round(true, signal: 80), 0);
+        Feed(Round(true, signal: 60), 5);
+        Feed(Round(true), 10); // no reading (e.g. location permission withdrawn)
+        Assert.Equal(70, Assert.Single(_ledger.Minutes(DateTime.MinValue)).SignalPercent);
+
+        var json = JsonSerializer.Serialize(_ledger.ToDocument(), AppJson.Options);
+        var copy = new QualityLedger(JsonSerializer.Deserialize<QualityDocument>(json, AppJson.Options));
+        Assert.Equal(70, Assert.Single(copy.Minutes(DateTime.MinValue)).SignalPercent);
+    }
+
+    [Fact]
+    public void BuildsAStandardQuery()
+    {
+        var query = DnsProbe.BuildQuery(0xBEEF, "example.com");
+        byte[] expected =
+        [
+            0xBE, 0xEF, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            7, (byte)'e', (byte)'x', (byte)'a', (byte)'m', (byte)'p', (byte)'l', (byte)'e',
+            3, (byte)'c', (byte)'o', (byte)'m', 0,
+            0x00, 0x01, 0x00, 0x01,
+        ];
+        Assert.Equal(expected, query);
+        Assert.Throws<ArgumentException>(() => DnsProbe.BuildQuery(1, "bad..name"));
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0x12, 0x34, 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0 }, true)]   // answer
+    [InlineData(new byte[] { 0x12, 0x34, 0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0 }, true)]   // NXDOMAIN: the server works
+    [InlineData(new byte[] { 0x12, 0x34, 0x81, 0x82, 0, 1, 0, 0, 0, 0, 0, 0 }, false)]  // SERVFAIL
+    [InlineData(new byte[] { 0x12, 0x34, 0x81, 0x85, 0, 1, 0, 0, 0, 0, 0, 0 }, false)]  // REFUSED
+    [InlineData(new byte[] { 0x12, 0x35, 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0 }, false)]  // other query
+    [InlineData(new byte[] { 0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0 }, false)]  // a query, not a reply
+    [InlineData(new byte[] { 0x12, 0x34, 0x81 }, false)]                                 // truncated
+    public void RecognisesAnswers(byte[] reply, bool expected) =>
+        Assert.Equal(expected, DnsProbe.IsAnswer(reply, 0x1234));
+}

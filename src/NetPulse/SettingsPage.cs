@@ -46,6 +46,7 @@ internal sealed class SettingsPage : UserControl
     private readonly CheckBox _qualityEnabled = Check(T("开启连接质量监测（定时 Ping 网关，只在局域网内）", "Monitor the connection (pings the gateway, stays inside your local network)"));
     private readonly CheckBox _qualityExternal = Check(T("同时 Ping 外网地址，区分本地问题和运营商问题", "Also ping an internet address, to tell local problems from ISP problems"));
     private readonly TextBox _qualityTarget = new() { Width = 200 };
+    private readonly CheckBox _qualityDns = Check(T("检查 DNS（向网络的 DNS 服务器查询 cloudflare.com，找出“能连上但打不开网页”）", "Check DNS (asks the network's DNS server for cloudflare.com, to catch \"connected but pages don't open\")"));
     private readonly NumericUpDown _qualityInterval = Number(2, 60, 1, 0);
     private readonly NumericUpDown _qualityLatency = Number(20, 2000, 10, 0);
     private readonly CheckBox _qualityAlert = Check(T("断线后提醒（恢复连接时显示断了多久）", "Notify after an outage (when the connection is back, with how long it lasted)"));
@@ -122,6 +123,7 @@ internal sealed class SettingsPage : UserControl
                 Text = T("开启外网探测后，NetPulse 会按上面的间隔持续 Ping 这个地址，每天约 1 MB。默认的 1.1.1.1 是 Cloudflare 的公共 DNS。", "With the internet probe on, NetPulse keeps pinging this address at the interval above, about 1 MB a day. The default 1.1.1.1 is Cloudflare's public DNS."),
                 Padding = new Padding(0, 2, 0, 4),
             },
+            _qualityDns,
             _qualityAlert,
             Row(T("断线超过（秒）", "Outage longer than (s)"), _qualityAlertSeconds)));
         layout.Controls.Add(Group(
@@ -145,7 +147,7 @@ internal sealed class SettingsPage : UserControl
                 AutoSize = true,
                 MaximumSize = new Size(560, 0),
                 Text = T("NetPulse 不收集、不上传任何数据，也没有广告或付费功能。只有在你主动使用测速、查询公网 IP、", "NetPulse collects and uploads nothing, and has no ads or paid features. It only goes online when you run a speed test, look up your public IP, ") +
-                    T("Ping / 路由追踪 / DNS 查询、端口检测时，或者开启了自动测速、更新检查、连接质量的外网探测时才会联网，且只连接对应的目标。\n所有设置和统计只保存在本机：", "or use Ping / Traceroute / DNS lookup / Port check, or when you turned on automatic speed tests, the update check or the internet probe of connection quality, and then only contacts that target.\nAll settings and statistics stay on this PC: ") + AppPaths.DataDirectory,
+                    T("Ping / 路由追踪 / DNS 查询、端口检测时，或者开启了自动测速、更新检查、连接质量的外网探测或 DNS 检查时才会联网，且只连接对应的目标。\n所有设置和统计只保存在本机：", "or use Ping / Traceroute / DNS lookup / Port check, or when you turned on automatic speed tests, the update check, or the internet probe or DNS check of connection quality, and then only contacts that target.\nAll settings and statistics stay on this PC: ") + AppPaths.DataDirectory,
                 Padding = new Padding(0, 6, 0, 6),
             },
             openFolder,
@@ -185,7 +187,7 @@ internal sealed class SettingsPage : UserControl
 
         _qualityTarget.Leave += OnChanged; // not per keystroke: a half-typed host name is not worth probing
 
-        foreach (var check in new[] { _qualityEnabled, _qualityExternal, _qualityAlert, _updateCheck, _speedAlert,_programAlert, _weeklySummary, _miniGraph, _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
+        foreach (var check in new[] { _qualityEnabled, _qualityExternal, _qualityDns, _qualityAlert, _updateCheck, _speedAlert,_programAlert, _weeklySummary, _miniGraph, _excludeVirtual, _showWidget, _alwaysOnTop, _hideFullscreen, _lock, _clickThrough, _planEnabled, _planUpload })
         {
             check.CheckedChanged += OnChanged;
         }
@@ -246,6 +248,7 @@ internal sealed class SettingsPage : UserControl
             _qualityEnabled.Checked = _settings.Quality.Enabled;
             _qualityExternal.Checked = _settings.Quality.ProbeExternal;
             _qualityTarget.Text = _settings.Quality.ExternalTarget;
+            _qualityDns.Checked = _settings.Quality.ProbeDns;
             _qualityInterval.Value = _settings.Quality.IntervalSeconds;
             _qualityLatency.Value = _settings.Quality.HighLatencyMs;
             _qualityAlert.Checked = _settings.Quality.OutageAlert;
@@ -300,6 +303,7 @@ internal sealed class SettingsPage : UserControl
         _settings.Quality.Enabled = _qualityEnabled.Checked;
         _settings.Quality.ProbeExternal = _qualityExternal.Checked;
         _settings.Quality.ExternalTarget = _qualityTarget.Text;
+        _settings.Quality.ProbeDns = _qualityDns.Checked;
         _settings.Quality.IntervalSeconds = (int)_qualityInterval.Value;
         _settings.Quality.HighLatencyMs = (int)_qualityLatency.Value;
         _settings.Quality.OutageAlert = _qualityAlert.Checked;
@@ -519,7 +523,7 @@ internal sealed class SettingsPage : UserControl
         _planLimit.Enabled = _planDay.Enabled = _planWarn.Enabled = _planUpload.Enabled = _planEnabled.Checked;
         _speedAlertDirection.Enabled = _speedAlertLimit.Enabled = _speedAlertMinutes.Enabled = _speedAlert.Checked;
         _programAlertLimit.Enabled = _programAlert.Checked;
-        _qualityInterval.Enabled = _qualityLatency.Enabled = _qualityExternal.Enabled = _qualityAlert.Enabled = _qualityEnabled.Checked;
+        _qualityInterval.Enabled = _qualityLatency.Enabled = _qualityExternal.Enabled = _qualityDns.Enabled = _qualityAlert.Enabled = _qualityEnabled.Checked;
         _qualityTarget.Enabled = _qualityEnabled.Checked && _qualityExternal.Checked;
         _qualityAlertSeconds.Enabled = _qualityEnabled.Checked && _qualityAlert.Checked;
     }
